@@ -1,0 +1,43 @@
+name: Feature request
+description: Suggest a feature or an improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before suggesting, keep the project's non-negotiable rules in mind
+        (see CONTRIBUTING.md): **no write towards the device**, no deletion or
+        overwrite in the destination, and loud failure over doubtful success.
+        A proposal contradicting them cannot be accepted.
+
+  - type: textarea
+    id: need
+    attributes:
+      label: The need
+      description: >
+        Which concrete problem are you trying to solve? Describe the situation
+        rather than the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: The solution you have in mind
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Current workarounds, other approaches you ruled out and why.
+
+  - type: checkboxes
+    id: compatibility
+    attributes:
+      label: Compatibility with the project rules
+      options:
+        - label: >
+            My proposal involves no write and no deletion on the device.
+          required: true

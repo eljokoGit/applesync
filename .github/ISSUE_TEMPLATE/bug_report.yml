@@ -1,0 +1,115 @@
+name: Bug report
+description: Report something that does not work
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        ⚠️ **Do not attach any photo or the `manifest.sqlite3` file.**
+        The journal (`.applesync/logs/run_*.jsonl`) and the error message are
+        almost always enough. The journal contains file names: read it over
+        before posting.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happens
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to reproduce
+      placeholder: |
+        1. Plug in the device…
+        2. Click "Inventory"…
+        3. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Full error message
+      description: >
+        The "Details" button of the error dialog, or the console output.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: AppleSync version
+      description: Shown in the status bar at the bottom of the window.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device model and iOS version
+      placeholder: "iPhone 15 Pro, iOS 18.5"
+
+  - type: dropdown
+    id: driver
+    attributes:
+      label: Apple driver installed
+      options:
+        - iTunes (Apple Mobile Device Support)
+        - Apple Devices app
+        - CopyTrans drivers
+        - I don't know
+    validations:
+      required: true
+
+  - type: dropdown
+    id: step
+    attributes:
+      label: Step concerned
+      options:
+        - Device detection
+        - Inventory
+        - Copy / synchronisation
+        - Verification
+        - Albums
+        - Duplicates
+        - Stability check
+        - Installation or start-up
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: journal
+    attributes:
+      label: Journal excerpt (optional)
+      description: >
+        A few lines of `<destination>/.applesync/logs/run_*.jsonl` around the
+        incident.
+      render: json
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I am running the latest released version.
+          required: true
+        - label: >
+            I checked that no open issue already describes this problem.
+          required: true
+        - label: >
+            I have attached neither photos nor personal databases.
+          required: true

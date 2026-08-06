@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    # pymobiledevice3 is deliberately pinned: seeking inside a file (copy
+    # resume) goes through an internal API. Any version bump must be validated
+    # by hand against a real device.
+    ignore:
+      - dependency-name: pymobiledevice3
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    labels: ["dependencies"]
