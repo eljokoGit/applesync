@@ -14,7 +14,8 @@ from enum import Enum, auto
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from applesync import __version__
 from applesync.core.config import Config
 from applesync.core.engine import PreparedRun, ProgressSnapshot, SyncEngine
 from applesync.core.layout import label_for, layout_from_id, make_layout
@@ -46,6 +48,7 @@ from applesync.ui.workers import (
     ExecuteWorker,
     PrepareWorker,
     StabilityWorker,
+    UpdateCheckWorker,
     VerifyWorker,
 )
 
@@ -113,6 +116,35 @@ class MainWindow(QMainWindow):
         self._refresh_layout_lock()
         self._refresh_buttons()
         self._show_last_run_summary()
+        self._start_update_check()
+
+    # ------------------------------------------------------------------ maj
+    def _start_update_check(self) -> None:
+        """Vérifie une fois s'il existe une version plus récente.
+
+        Désactivable : « check_updates » à false dans la configuration.
+        Aucune donnée n'est envoyée, rien n'est téléchargé ni installé."""
+        if not self.config.get("check_updates", True):
+            return
+        w = UpdateCheckWorker(__version__, self)
+        w.update_available.connect(self._on_update_available)
+        w.finished.connect(lambda: self._forget_worker(w))
+        self._workers.append(w)
+        w.start()
+
+    def _on_update_available(self, info) -> None:
+        self.update_label.setText(
+            f"Version {info.latest} disponible (vous utilisez la {info.current}). "
+            f"La mise à jour est manuelle : voir les notes de version."
+        )
+        try:
+            self.btn_update.clicked.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        self.btn_update.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(info.url))
+        )
+        self.update_bar.show()
 
     # ------------------------------------------------------------------ layout
     def _build(self) -> None:
@@ -241,8 +273,24 @@ class MainWindow(QMainWindow):
         rep_lay.addLayout(btn_row)
         root.addWidget(rep_box, stretch=1)
 
+        # Bandeau de mise à jour : masqué tant qu'il n'y a rien à signaler.
+        self.update_bar = QFrame()
+        self.update_bar.setFrameShape(QFrame.StyledPanel)
+        self.update_bar.setStyleSheet(
+            "QFrame { border: 1px solid #1a7f37; border-left: 8px solid #1a7f37; "
+            "border-radius: 2px; padding: 4px; }"
+        )
+        up_lay = QHBoxLayout(self.update_bar)
+        self.update_label = QLabel("")
+        self.update_label.setWordWrap(True)
+        self.btn_update = QPushButton("Voir la nouvelle version")
+        up_lay.addWidget(self.update_label, stretch=1)
+        up_lay.addWidget(self.btn_update)
+        self.update_bar.hide()
+        root.addWidget(self.update_bar)
+
         self.setCentralWidget(central)
-        self.statusBar().showMessage("Prêt.")
+        self.statusBar().showMessage(f"Prêt. AppleSync {__version__}")
 
     # ------------------------------------------------------------------ helpers
     def _dest_text(self) -> str:

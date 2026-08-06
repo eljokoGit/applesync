@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    # pymobiledevice3 est volontairement figé : le positionnement dans un
+    # fichier (reprise de copie) passe par une API interne. Toute montée de
+    # version doit être validée à la main contre un appareil réel.
+    ignore:
+      - dependency-name: pymobiledevice3
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    labels: ["dependencies"]

@@ -1,5 +1,10 @@
 # AppleSync
 
+[![CI](https://github.com/eljokoGit/applesync/actions/workflows/ci.yml/badge.svg)](https://github.com/eljokoGit/applesync/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/eljokoGit/applesync)](https://github.com/eljokoGit/applesync/releases/latest)
+[![Licence MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+
 Sauvegarde **vérifiable** des photos et vidéos d'un iPhone vers un dossier
 local, sur Windows. Sans conversion : HEIC, HEVC et MOV sont copiés tels
 quels. Sans MTP : tout passe par le protocole de synchronisation d'Apple
@@ -61,8 +66,14 @@ albums et favoris, test de stabilité de l'inventaire.
 
 ## Installation
 
+**Sans Python** — télécharger `AppleSync.exe` depuis la
+[dernière release](https://github.com/eljokoGit/applesync/releases/latest)
+et double-cliquer.
+
+**Avec Python 3.12+** :
+
 ```
-git clone https://github.com/<compte>/applesync.git
+git clone https://github.com/eljokoGit/applesync.git
 cd applesync
 python -m venv .venv
 .venv\Scripts\python -m pip install .
@@ -74,8 +85,28 @@ Lancement :
 .venv\Scripts\applesync
 ```
 
-Sur Windows, `run-windows.bat` fait les trois étapes d'un double-clic
-(création de l'environnement au premier lancement, puis démarrage).
+Sur Windows, `run-windows.bat` fait ces étapes d'un double-clic (création de
+l'environnement au premier lancement, puis démarrage).
+
+## Mises à jour
+
+Au démarrage, l'application regarde s'il existe une version plus récente et
+l'affiche dans un bandeau, avec un lien vers les notes de version. **Elle ne
+télécharge et n'installe rien elle-même** : pour un outil de sauvegarde, une
+mise à jour silencieuse serait exactement ce qu'on ne veut pas. Une seule
+requête anonyme vers l'API GitHub, aucune donnée envoyée ; pour la
+désactiver, mettre `"check_updates": false` dans
+`%LOCALAPPDATA%\AppleSync\config.json`.
+
+Mettre à jour :
+
+- **exécutable** : télécharger le nouveau `AppleSync.exe` et remplacer
+  l'ancien ;
+- **installation Python** : `git pull` puis
+  `.venv\Scripts\python -m pip install .`
+
+Vos sauvegardes ne sont jamais touchées par une mise à jour : le manifeste
+et l'historique vivent dans le dossier de destination, pas dans le logiciel.
 
 ## Utilisation
 
@@ -136,6 +167,14 @@ Un appareil factice permet de prendre l'outil en main. `--sim-fault` injecte
 les pannes réelles (énumération tronquée sans erreur, déconnexion, appareil
 verrouillé) pour voir l'application refuser un inventaire douteux.
 
+## Contribuer
+
+Les bugs et les propositions passent par les
+[tickets](https://github.com/eljokoGit/applesync/issues) ; les modalités,
+les règles du projet et la procédure de publication sont dans
+[CONTRIBUTING.md](CONTRIBUTING.md). Pour une faille de sécurité, voir
+[SECURITY.md](SECURITY.md) — jamais de ticket public.
+
 ## Développement
 
 ```
@@ -143,7 +182,7 @@ verrouillé) pour voir l'application refuser un inventaire douteux.
 .venv\Scripts\python -m pytest tests -q
 ```
 
-La suite de tests (87 tests) s'exécute intégralement sur un simulateur
+La suite de tests (110 tests) s'exécute intégralement sur un simulateur
 d'appareil déterministe, sans matériel : arbre de fichiers reproductible,
 contenus générés à la volée, et injection des pannes du terrain
 (troncature silencieuse d'énumération, déconnexion en cours de route,

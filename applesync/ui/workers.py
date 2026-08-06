@@ -21,6 +21,23 @@ from applesync.core.verifier import verify_against_inventory
 from applesync.device.base import DeviceBackend, DeviceState, UsbmuxdUnavailableError
 
 
+class UpdateCheckWorker(QThread):
+    """Interroge GitHub une fois au démarrage. Muet s'il n'y a rien à dire."""
+
+    update_available = Signal(object)      # UpdateInfo
+
+    def __init__(self, current_version: str, parent=None):
+        super().__init__(parent)
+        self.current_version = current_version
+
+    def run(self) -> None:
+        from applesync.core.updates import check_for_update
+
+        info = check_for_update(self.current_version)
+        if info is not None:
+            self.update_available.emit(info)
+
+
 class DeviceWatcher(QThread):
     """Surveille le bus USB et publie l'état actionnable de l'appareil."""
 

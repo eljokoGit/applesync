@@ -1,0 +1,45 @@
+name: Proposition d'amélioration
+description: Suggérer une fonctionnalité ou une évolution
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Avant de proposer, gardez en tête les règles intangibles du projet
+        (voir CONTRIBUTING.md) : **aucune écriture vers l'iPhone**, aucune
+        suppression ni écrasement dans la destination, et échec bruyant
+        plutôt que succès douteux. Une proposition qui les contredirait ne
+        pourra pas être retenue.
+
+  - type: textarea
+    id: besoin
+    attributes:
+      label: Le besoin
+      description: >
+        Quel problème concret cherchez-vous à résoudre ? Décrivez la
+        situation plutôt que la solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposition
+    attributes:
+      label: La solution envisagée
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives envisagées
+      description: Contournements actuels, autres approches écartées et pourquoi.
+
+  - type: checkboxes
+    id: compatibilite
+    attributes:
+      label: Compatibilité avec les règles du projet
+      options:
+        - label: >
+            Ma proposition n'implique aucune écriture ni suppression sur
+            l'iPhone.
+          required: true

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "applesync"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Sauvegarde vérifiable des photos et vidéos d'un iPhone vers un dossier local, sans conversion, via le protocole Apple (usbmuxd/AFC)."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -38,5 +38,16 @@ applesync = "applesync.__main__:main"
 [project.gui-scripts]
 applesync-gui = "applesync.__main__:main"
 
+[project.urls]
+Homepage = "https://github.com/eljokoGit/applesync"
+Issues = "https://github.com/eljokoGit/applesync/issues"
+Changelog = "https://github.com/eljokoGit/applesync/blob/main/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = { attr = "applesync.__version__" }
+
 [tool.setuptools.packages.find]
 include = ["applesync*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

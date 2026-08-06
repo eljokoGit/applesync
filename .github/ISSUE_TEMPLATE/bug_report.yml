@@ -1,0 +1,115 @@
+name: Rapport de bug
+description: Signaler un dysfonctionnement
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci de prendre le temps de signaler ce problème.
+
+        ⚠️ **Ne joignez aucune photo ni le fichier `manifest.sqlite3`.**
+        Le journal (`.applesync/logs/run_*.jsonl`) et le message d'erreur
+        suffisent presque toujours. Le journal contient des noms de
+        fichiers : relisez-le avant de le publier.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Ce qui se passe
+      description: Ce que vous attendiez, et ce qui s'est produit à la place.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Comment le reproduire
+      placeholder: |
+        1. Brancher l'iPhone…
+        2. Cliquer sur « Inventorier »…
+        3. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: erreur
+    attributes:
+      label: Message d'erreur complet
+      description: >
+        Bouton « Détails » de la fenêtre d'erreur, ou sortie de la console.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: Version d'AppleSync
+      description: Affichée dans la barre d'état, en bas de la fenêtre.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Version de Windows
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+
+  - type: input
+    id: appareil
+    attributes:
+      label: iPhone et version d'iOS
+      placeholder: "iPhone 15 Pro, iOS 18.5"
+
+  - type: dropdown
+    id: pilote
+    attributes:
+      label: Pilote Apple installé
+      options:
+        - iTunes (Apple Mobile Device Support)
+        - Application Apple Devices
+        - Pilotes CopyTrans
+        - Je ne sais pas
+    validations:
+      required: true
+
+  - type: dropdown
+    id: etape
+    attributes:
+      label: Étape concernée
+      options:
+        - Détection de l'appareil
+        - Inventaire
+        - Copie / synchronisation
+        - Vérification
+        - Albums
+        - Doublons
+        - Test de stabilité
+        - Installation ou démarrage
+        - Autre
+    validations:
+      required: true
+
+  - type: textarea
+    id: journal
+    attributes:
+      label: Extrait de journal (facultatif)
+      description: >
+        Quelques lignes de `<destination>/.applesync/logs/run_*.jsonl`
+        autour de l'incident.
+      render: json
+
+  - type: checkboxes
+    id: verifications
+    attributes:
+      label: Vérifications
+      options:
+        - label: J'utilise la dernière version publiée.
+          required: true
+        - label: >
+            J'ai vérifié qu'aucun ticket ouvert ne décrit déjà ce problème.
+          required: true
+        - label: >
+            Je n'ai joint ni photo ni base de données personnelle.
+          required: true

@@ -1,0 +1,131 @@
+name: Release
+
+# Publication déclenchée par une étiquette : git tag v1.2.0 && git push --tags
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verifier:
+    name: Vérifications préalables
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: L'étiquette correspond-elle à la version du code ?
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version=$(python -c "import applesync; print(applesync.__version__)")
+          tag="${GITHUB_REF_NAME#v}"
+          echo "version du code : $version — étiquette : $tag"
+          if [ "$version" != "$tag" ]; then
+            echo "::error::L'étiquette $GITHUB_REF_NAME ne correspond pas à __version__ ($version)."
+            exit 1
+          fi
+
+      - name: Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests -q
+
+  paquets:
+    name: Paquets Python
+    needs: verifier
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Construire
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paquets
+          path: dist/
+
+  executable:
+    name: Exécutable Windows
+    needs: verifier
+    runs-on: windows-latest
+    # Au pire des cas la release sort sans exécutable : les paquets Python
+    # restent installables et la publication n'est pas bloquée.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Construire l'exécutable
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m pip install .
+          pyinstaller --noconfirm --clean --onefile --windowed `
+            --name AppleSync `
+            --collect-submodules pymobiledevice3 `
+            --collect-data pymobiledevice3 `
+            applesync/__main__.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: executable-windows
+          path: dist/AppleSync.exe
+
+  publier:
+    name: Publier la release
+    needs: [paquets, executable]
+    if: always() && needs.paquets.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artefacts
+
+      - name: Rassembler les fichiers
+        run: |
+          mkdir -p publication
+          cp artefacts/paquets/* publication/ 2>/dev/null || true
+          cp artefacts/executable-windows/* publication/ 2>/dev/null || true
+          ls -l publication
+
+      - name: Créer la release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: publication/*
+          generate_release_notes: true
+          body: |
+            Voir [CHANGELOG.md](https://github.com/eljokoGit/applesync/blob/main/CHANGELOG.md)
+            pour le détail des changements.
+
+            **Installation**
+
+            - Windows, sans Python : télécharger `AppleSync.exe` ci-dessous
+              (s'il est présent), puis double-cliquer.
+            - Avec Python 3.12+ : `pip install applesync-<version>-py3-none-any.whl`
+
+            Rappel : le pilote Apple (iTunes, application Apple Devices ou
+            pilotes CopyTrans) doit être installé pour que l'iPhone soit vu.
