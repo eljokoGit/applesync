@@ -1,14 +1,18 @@
-"""AppleSync main window. Legibility of state before aesthetics.
+"""AppleSync main window.
 
 Window state machine:
     IDLE -> PREPARING -> PLAN_READY -> SYNCING -> IDLE
                                     \\ clean interruption /
     (VERIFYING, STABILITY and ALBUMS are exclusive operations from IDLE)
 
+Shape of the screen: a header carrying the app identity and a live device
+chip, then the destination, then the three steps of the flow as numbered
+cards, then progress, then the report. Occasional tools (albums, duplicates,
+stability check) live in a menu instead of competing with the flow.
+
 Presentation rules: no widget carries inline colours — it declares an object
 name or a dynamic property and `theme.py` decides how that looks. Numbers are
-monospaced so they stop shifting while a transfer runs. The two steps of the
-main flow are the only accented buttons; everything else is a quiet tool.
+monospaced so they stop shifting while a transfer runs.
 """
 
 from __future__ import annotations
@@ -19,31 +23,47 @@ from enum import Enum, auto
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QColor,
+    QDesktopServices,
+    QFont,
+    QIcon,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QTextBrowser,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from applesync import __version__
 from applesync.core.config import Config
-from applesync.core.engine import COMPLETED, FAILED, INTERRUPTED, PreparedRun, \
-    ProgressSnapshot, SyncEngine
+from applesync.core.engine import (
+    COMPLETED,
+    FAILED,
+    INTERRUPTED,
+    PreparedRun,
+    ProgressSnapshot,
+    SyncEngine,
+)
 from applesync.core.layout import label_for, make_layout
 from applesync.core.manifest import Manifest
 from applesync.core.report import RunReport, fmt_bytes, fmt_duration
@@ -60,39 +80,32 @@ from applesync.ui.workers import (
     VerifyWorker,
 )
 
-# tone drives the status card colours through the stylesheet
+# tone drives the chip colours through the stylesheet
 STATE_STYLES = {
     DeviceState.ABSENT: ("neutral", "No device detected",
                          "The Apple service is answering but sees no device. "
                          "Plug the iPhone in over USB; if the cable is already "
                          "connected, try another cable (many are charge-only) "
-                         "or another USB port, and unlock the device."),
-    DeviceState.NO_USBMUXD: ("danger", "Apple Mobile Device service unreachable",
+                         "or another port, and unlock the device."),
+    DeviceState.NO_USBMUXD: ("danger", "Apple service unreachable",
                              "The usbmuxd driver is not answering on "
-                             "127.0.0.1:27015: this PC cannot see any iPhone, "
-                             "even plugged in. Install iTunes (Apple Mobile "
-                             "Device Support), the Apple Devices app or the "
-                             "CopyTrans drivers, then restart. If it is already "
-                             "installed, start the \"Apple Mobile Device "
-                             "Service\" (services.msc)."),
+                             "127.0.0.1:27015, so this PC cannot see any "
+                             "device even plugged in. Install iTunes, the "
+                             "Apple Devices app or the CopyTrans drivers — or "
+                             "start the Apple Mobile Device Service."),
     DeviceState.LOCKED: ("warn", "Device locked",
-                         "Unlock the device screen (passcode or Face ID)."),
+                         "Unlock the device screen with its passcode or Face ID."),
     DeviceState.UNTRUSTED: ("warn", "Device not paired",
-                            "On the device: tap \"Trust This Computer\", then "
+                            "On the device, tap \"Trust This Computer\" and "
                             "enter the passcode."),
     DeviceState.READY: ("ready", "Device ready",
-                        "You can run the inventory."),
-    DeviceState.ERROR: ("danger", "Device detected but unreachable",
+                        "Run the inventory when you are ready."),
+    DeviceState.ERROR: ("danger", "Device unreachable",
                         "Unplug and plug the cable back in. If it persists, "
                         "restart the Apple Mobile Device service."),
 }
 
-EMPTY_PLAN_TITLE = "Nothing inventoried yet"
-EMPTY_PLAN_BODY = (
-    "Pick a destination folder and a layout, then run the inventory. "
-    "It walks the device twice and compares both passes; nothing is written "
-    "until you validate the plan."
-)
+ASSETS = Path(__file__).with_name("assets")
 
 
 class UiState(Enum):
@@ -105,12 +118,11 @@ class UiState(Enum):
     ALBUMS = auto()
 
 
-def _vsep() -> QFrame:
-    """Hairline separator between button groups."""
+def _hsep() -> QFrame:
     f = QFrame()
-    f.setObjectName("VSep")
-    f.setFrameShape(QFrame.VLine)
-    f.setFixedWidth(1)
+    f.setObjectName("HSep")
+    f.setFrameShape(QFrame.HLine)
+    f.setFixedHeight(1)
     return f
 
 
@@ -123,21 +135,26 @@ class MainWindow(QMainWindow):
         self.config = config or Config()
         self.cancel = threading.Event()
         self.prepared: PreparedRun | None = None
-        self._expected_files: int | None = None   # count of the last known inventory
+        self._expected_files: int | None = None
         self._last_error_details: str = ""
         self.current_udid: str = ""
         self.device_state: DeviceState = DeviceState.ABSENT
         self.ui_state = UiState.IDLE
         self._workers: list = []
+        self._theme_mode: str = self.config.get("theme", "system")
+        self.palette_ = theme.palette_for(self._theme_mode)
 
-        title = "AppleSync — iPhone to PC backup"
+        title = "AppleSync"
         if simulate:
-            title += "   ·   simulation mode, no real device"
+            title += " — simulation mode, no real device"
         self.setWindowTitle(title)
-        self.setStyleSheet(theme.stylesheet())
-        self.setMinimumSize(860, 700)
-        self.resize(1000, 900)
+        icon = ASSETS / "icon.png"
+        if icon.exists():
+            self.setWindowIcon(QIcon(str(icon)))
+        self.setMinimumSize(860, 680)
+        self.resize(1000, 880)
         self._build()
+        self._apply_theme()
 
         self.watcher = DeviceWatcher(backend)
         self.watcher.state_changed.connect(self._on_device_state)
@@ -146,6 +163,21 @@ class MainWindow(QMainWindow):
         self._refresh_buttons()
         self._show_last_run_summary()
         self._start_update_check()
+
+    # ------------------------------------------------------------------ theme
+    def _apply_theme(self) -> None:
+        self.palette_ = theme.palette_for(self._theme_mode)
+        self.setStyleSheet(theme.stylesheet(self.palette_))
+        self.report_view.document().setDefaultStyleSheet(
+            theme.report_document_css(self.palette_)
+        )
+        # Re-render the current document so the new colours take effect.
+        self._set_report(self.report_view.toMarkdown())
+
+    def _set_theme(self, mode: str) -> None:
+        self._theme_mode = mode
+        self.config.set("theme", mode)
+        self._apply_theme()
 
     # ------------------------------------------------------------------ updates
     def _start_update_check(self) -> None:
@@ -179,63 +211,112 @@ class MainWindow(QMainWindow):
     def _build(self) -> None:
         central = QWidget()
         root = QVBoxLayout(central)
-        root.setContentsMargins(18, 14, 18, 10)
+        root.setContentsMargins(20, 16, 20, 10)
         root.setSpacing(theme.GAP)
 
-        root.addWidget(self._build_status_card())
+        root.addWidget(self._build_header())
         root.addWidget(self._build_notices())
         root.addWidget(self._build_destination())
-        root.addLayout(self._build_actions())
-        root.addWidget(self._build_plan(), stretch=2)
+        root.addWidget(self._build_flow())
         root.addWidget(self._build_progress())
-        root.addWidget(self._build_report(), stretch=3)
+        root.addWidget(self._build_report(), stretch=1)
 
         self.setCentralWidget(central)
-        self.statusBar().showMessage(f"Ready · AppleSync {__version__}")
+        self.statusBar().showMessage("Ready")
 
-    def _build_status_card(self) -> QWidget:
-        self.banner = QFrame()
-        self.banner.setObjectName("StatusCard")
-        self.banner.setProperty("state", "neutral")
-        outer = QHBoxLayout(self.banner)
-        outer.setContentsMargins(16, 14, 16, 14)
-        outer.setSpacing(12)
+    def _build_header(self) -> QWidget:
+        head = QWidget()
+        head.setObjectName("Header")
+        row = QHBoxLayout(head)
+        row.setContentsMargins(2, 0, 2, 0)
+        row.setSpacing(10)
 
-        self.status_dot = QLabel()
-        self.status_dot.setObjectName("StatusDot")
-        dot_col = QVBoxLayout()
-        dot_col.addSpacing(5)
-        dot_col.addWidget(self.status_dot)
-        dot_col.addStretch(1)
-        outer.addLayout(dot_col)
+        name = QLabel("AppleSync")
+        name.setObjectName("AppName")
+        version = QLabel(f"v{__version__}")
+        version.setObjectName("AppVersion")
+        row.addWidget(name)
+        row.addWidget(version)
+        row.addSpacing(14)
 
-        text_col = QVBoxLayout()
-        text_col.setSpacing(3)
-        # state_label carries the title alone: it is what the smoke test reads.
+        # Device chip — the live state, always visible, never in the way.
+        self.chip = QFrame()
+        self.chip.setObjectName("Chip")
+        self.chip.setProperty("state", "neutral")
+        chip_row = QHBoxLayout(self.chip)
+        chip_row.setContentsMargins(12, 6, 14, 6)
+        chip_row.setSpacing(8)
+        self.chip_dot = QLabel()
+        self.chip_dot.setObjectName("ChipDot")
+        # state_label carries the state title: the smoke test reads it.
         self.state_label = QLabel("Looking for a device…")
-        self.state_label.setObjectName("StatusTitle")
-        self.state_hint = QLabel("")
-        self.state_hint.setObjectName("StatusHint")
-        self.state_hint.setWordWrap(True)
-        self.state_udid = QLabel("")
-        self.state_udid.setObjectName("StatusUdid")
-        self.state_udid.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.state_udid.hide()
-        text_col.addWidget(self.state_label)
-        text_col.addWidget(self.state_hint)
-        text_col.addWidget(self.state_udid)
-        outer.addLayout(text_col, stretch=1)
-        return self.banner
+        self.state_label.setObjectName("ChipText")
+        chip_row.addWidget(self.chip_dot)
+        chip_row.addWidget(self.state_label)
+        row.addWidget(self.chip)
+        row.addStretch(1)
+
+        self.tools_btn = QToolButton()
+        self.tools_btn.setText("Tools  ▾")
+        self.tools_btn.setPopupMode(QToolButton.InstantPopup)
+        self.tools_btn.setMenu(self._build_tools_menu())
+        row.addWidget(self.tools_btn)
+        return head
+
+    def _build_tools_menu(self) -> QMenu:
+        menu = QMenu(self)
+
+        self.act_albums = QAction("Rebuild albums and favourites", self)
+        self.act_albums.setToolTip(
+            "Read the device Photos database and rebuild each album as a "
+            "folder of copies"
+        )
+        self.act_albums.triggered.connect(self._start_albums)
+        menu.addAction(self.act_albums)
+
+        self.act_duplicates = QAction("List content duplicates", self)
+        self.act_duplicates.setToolTip(
+            "Group files with identical content — report only, nothing deleted"
+        )
+        self.act_duplicates.triggered.connect(self._show_duplicates)
+        menu.addAction(self.act_duplicates)
+
+        self.act_stability = QAction("Run stability check (3 inventories)", self)
+        self.act_stability.setToolTip(
+            "Three inventories with an unplug in between — proves enumeration "
+            "is reproducible. A one-off diagnostic."
+        )
+        self.act_stability.triggered.connect(self._start_stability)
+        menu.addAction(self.act_stability)
+
+        menu.addSeparator()
+        self.act_open_reports = QAction("Open reports folder", self)
+        self.act_open_reports.triggered.connect(self._open_reports_dir)
+        menu.addAction(self.act_open_reports)
+
+        menu.addSeparator()
+        appearance = menu.addMenu("Appearance")
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        for mode, label in (("system", "Follow system"),
+                            ("light", "Light"),
+                            ("dark", "Dark")):
+            act = QAction(label, self, checkable=True)
+            act.setChecked(self._theme_mode == mode)
+            act.triggered.connect(lambda _=False, m=mode: self._set_theme(m))
+            group.addAction(act)
+            appearance.addAction(act)
+        return menu
 
     def _build_notices(self) -> QWidget:
-        """Update and error strips, stacked; both hidden by default."""
         holder = QWidget()
+        holder.setObjectName("Plain")
         lay = QVBoxLayout(holder)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
 
         self.update_bar = QFrame()
-        self.update_bar.setObjectName("Notice")
+        self.update_bar.setObjectName("Card")
         self.update_bar.setProperty("tone", "accent")
         up = QHBoxLayout(self.update_bar)
         up.setContentsMargins(14, 10, 10, 10)
@@ -248,9 +329,9 @@ class MainWindow(QMainWindow):
         self.update_bar.hide()
         lay.addWidget(self.update_bar)
 
-        # Errors are shown inline first; the modal only carries the traceback.
+        # Errors surface inline first; the modal only carries the traceback.
         self.error_bar = QFrame()
-        self.error_bar.setObjectName("Notice")
+        self.error_bar.setObjectName("Card")
         self.error_bar.setProperty("tone", "danger")
         er = QHBoxLayout(self.error_bar)
         er.setContentsMargins(14, 10, 10, 10)
@@ -271,21 +352,29 @@ class MainWindow(QMainWindow):
         return holder
 
     def _build_destination(self) -> QWidget:
-        box = QGroupBox("DESTINATION")
-        v = QVBoxLayout(box)
+        card = QFrame()
+        card.setObjectName("Card")
+        v = QVBoxLayout(card)
+        v.setContentsMargins(theme.PAD, 12, theme.PAD, 12)
         v.setSpacing(10)
 
         row = QHBoxLayout()
         row.setSpacing(10)
+        cap = QLabel("BACKUP FOLDER")
+        cap.setObjectName("SectionLabel")
+        row.addWidget(cap)
+        row.addStretch(1)
+        self.dest_btn = QPushButton("Choose…")
+        self.dest_btn.setObjectName("Quiet")
+        self.dest_btn.clicked.connect(self._choose_dest)
+        row.addWidget(self.dest_btn)
+        v.addLayout(row)
+
         self.dest_label = QLabel(self._dest_text())
         self.dest_label.setObjectName("Value")
         self.dest_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.dest_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self.dest_btn = QPushButton("Choose…")
-        self.dest_btn.clicked.connect(self._choose_dest)
-        row.addWidget(self.dest_label, stretch=1)
-        row.addWidget(self.dest_btn)
-        v.addLayout(row)
+        v.addWidget(self.dest_label)
 
         opts = QHBoxLayout()
         opts.setSpacing(10)
@@ -293,7 +382,7 @@ class MainWindow(QMainWindow):
         lab.setObjectName("FieldLabel")
         self.layout_combo = QComboBox()
         self.layout_combo.addItem("Mirror of the device tree", "mirror")
-        self.layout_combo.addItem("By date — YYYY/YYYY-MM", "date")
+        self.layout_combo.addItem("By date — YYYY / YYYY-MM", "date")
         self.layout_combo.addItem("Archive — dated names, _LivePhotos", "archive")
         self.screenshots_check = QCheckBox("Screenshots apart")
         self.layout_lock_label = QLabel("")
@@ -311,113 +400,103 @@ class MainWindow(QMainWindow):
         opts.addWidget(self.screenshots_check)
         opts.addWidget(self.layout_lock_label, stretch=1)
         v.addLayout(opts)
-        return box
+        return card
 
-    def _build_actions(self) -> QHBoxLayout:
-        """Two accented steps, then the tools, then the stop — not seven
-        identical buttons in a row."""
-        actions = QHBoxLayout()
-        actions.setSpacing(8)
+    def _step_header(self, number: str, title: str, button: QPushButton) -> QWidget:
+        head = QWidget()
+        head.setObjectName("Plain")
+        row = QHBoxLayout(head)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        num = QLabel(number)
+        num.setObjectName("StepNumber")
+        lab = QLabel(title)
+        lab.setObjectName("CardTitle")
+        row.addWidget(num)
+        row.addWidget(lab)
+        row.addStretch(1)
+        row.addWidget(button)
+        return head
 
-        self.btn_inventory = QPushButton("1 · Inventory")
+    def _build_flow(self) -> QWidget:
+        """The three steps that matter, in order, in one card."""
+        card = QFrame()
+        card.setObjectName("Card")
+        v = QVBoxLayout(card)
+        v.setContentsMargins(theme.PAD, 12, theme.PAD, 12)
+        v.setSpacing(10)
+
+        self.btn_inventory = QPushButton("Run inventory")
         self.btn_inventory.setObjectName("Primary")
-        self.btn_sync = QPushButton("2 · Synchronise")
+        self.btn_inventory.clicked.connect(self._start_prepare)
+        self.btn_sync = QPushButton("Copy to PC")
         self.btn_sync.setObjectName("Primary")
+        self.btn_sync.clicked.connect(self._start_execute)
         self.btn_verify = QPushButton("Verify")
-        self.btn_stability = QPushButton("Stability ×3")
-        self.btn_duplicates = QPushButton("Duplicates")
-        self.btn_albums = QPushButton("Albums")
+        self.btn_verify.clicked.connect(self._start_verify)
         self.btn_cancel = QPushButton("Stop")
         self.btn_cancel.setObjectName("Stop")
-
-        self.btn_verify.setToolTip(
-            "Re-read every backed-up file from disk and compare it to the device"
-        )
-        self.btn_stability.setToolTip(
-            "Three inventories with an unplug in between — proves enumeration "
-            "is reproducible"
-        )
-        self.btn_duplicates.setToolTip(
-            "Group files with identical content (report only, nothing deleted)"
-        )
-        self.btn_albums.setToolTip(
-            "Rebuild the device albums and favourites as folders of copies"
-        )
-
-        self.btn_inventory.clicked.connect(self._start_prepare)
-        self.btn_sync.clicked.connect(self._start_execute)
-        self.btn_verify.clicked.connect(self._start_verify)
-        self.btn_stability.clicked.connect(self._start_stability)
-        self.btn_duplicates.clicked.connect(self._show_duplicates)
-        self.btn_albums.clicked.connect(self._start_albums)
         self.btn_cancel.clicked.connect(self._request_cancel)
 
-        actions.addWidget(self.btn_inventory)
-        actions.addWidget(self.btn_sync)
-        actions.addSpacing(6)
-        actions.addWidget(_vsep())
-        actions.addSpacing(6)
-        for b in (self.btn_verify, self.btn_duplicates, self.btn_albums,
-                  self.btn_stability):
-            actions.addWidget(b)
-        actions.addStretch(1)
-        actions.addWidget(self.btn_cancel)
-        return actions
+        v.addWidget(self._step_header("01", "Inventory the device",
+                                      self.btn_inventory))
 
-    def _build_plan(self) -> QWidget:
-        self.plan_box = QGroupBox("INVENTORY AND PLAN")
-        lay = QVBoxLayout(self.plan_box)
-        lay.setSpacing(6)
-        self.plan_empty_title = QLabel(EMPTY_PLAN_TITLE)
+        # Plan: empty state, then the numbers, scrolling inside the card.
+        self.plan_empty_title = QLabel("Nothing inventoried yet")
         self.plan_empty_title.setObjectName("EmptyTitle")
-        self.plan_empty_body = QLabel(EMPTY_PLAN_BODY)
+        self.plan_empty_body = QLabel(
+            "The inventory walks the device twice and compares both passes. "
+            "Nothing is written until you validate the plan."
+        )
         self.plan_empty_body.setObjectName("EmptyBody")
         self.plan_empty_body.setWordWrap(True)
-        # plan_label keeps its name: the smoke test and the summary write to it.
         self.plan_label = QLabel("")
-        self.plan_label.setWordWrap(True)
+        self.plan_label.setObjectName("PlanText")   # monospaced via the QSS
+        # No wrapping: a wrapped line would break the column grid, and a long
+        # path would silently change the block's height. It scrolls instead.
+        self.plan_label.setWordWrap(False)
         self.plan_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.plan_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.plan_label.setFont(theme.mono_font(theme.SIZE_BODY))
         self.plan_label.hide()
-        # A long conflict list must scroll inside the panel rather than push
-        # the report off the window.
+
         self.plan_scroll = QScrollArea()
         self.plan_scroll.setObjectName("Plain")
         self.plan_scroll.setWidgetResizable(True)
         self.plan_scroll.setFrameShape(QFrame.NoFrame)
-        self.plan_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         inner = QWidget()
         inner.setObjectName("Plain")
         inner_lay = QVBoxLayout(inner)
-        inner_lay.setContentsMargins(0, 0, 0, 0)
-        inner_lay.setSpacing(6)
+        inner_lay.setContentsMargins(24, 0, 0, 0)
+        inner_lay.setSpacing(5)
         inner_lay.addWidget(self.plan_empty_title)
         inner_lay.addWidget(self.plan_empty_body)
         inner_lay.addWidget(self.plan_label)
         inner_lay.addStretch(1)
         self.plan_scroll.setWidget(inner)
-        self.plan_box.setMinimumHeight(132)
-        lay.addWidget(self.plan_scroll)
-        return self.plan_box
+        self.plan_scroll.setMinimumHeight(142)
+        v.addWidget(self.plan_scroll)
 
-    def _show_plan_text(self, text: str) -> None:
-        self.plan_empty_title.hide()
-        self.plan_empty_body.hide()
-        self.plan_label.setText(text)
-        self.plan_label.show()
+        v.addWidget(_hsep())
+        v.addWidget(self._step_header("02", "Copy what is missing",
+                                      self.btn_sync))
+        v.addWidget(_hsep())
+        v.addWidget(self._step_header("03", "Verify the backup",
+                                      self.btn_verify))
+        return card
 
     def _build_progress(self) -> QWidget:
-        box = QGroupBox("PROGRESS")
-        grid = QGridLayout(box)
-        grid.setHorizontalSpacing(14)
-        grid.setVerticalSpacing(7)
+        card = QFrame()
+        card.setObjectName("Card")
+        grid = QGridLayout(card)
+        grid.setContentsMargins(theme.PAD, 12, theme.PAD, 12)
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(8)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 1000)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(10)
+        self.progress_bar.setFixedHeight(8)
 
         self.lbl_phase = QLabel("Waiting.")
         self.lbl_phase.setObjectName("Phase")
@@ -431,8 +510,17 @@ class MainWindow(QMainWindow):
         self.lbl_speed = QLabel("—")
         self.lbl_speed.setObjectName("Value")
 
-        grid.addWidget(self.progress_bar, 0, 0, 1, 4)
-        grid.addWidget(self.lbl_phase, 1, 0, 1, 4)
+        # Stop belongs next to what is running, not inside a step.
+        phase_row = QWidget()
+        phase_row.setObjectName("Plain")
+        pr = QHBoxLayout(phase_row)
+        pr.setContentsMargins(0, 0, 0, 0)
+        pr.setSpacing(10)
+        pr.addWidget(self.lbl_phase, stretch=1)
+        pr.addWidget(self.btn_cancel)
+
+        grid.addWidget(self.progress_bar, 0, 0, 1, 3)
+        grid.addWidget(phase_row, 1, 0, 1, 3)
         for col, (name, widget) in enumerate((
             ("FILE", self.lbl_file),
             ("DONE", self.lbl_counts),
@@ -451,35 +539,31 @@ class MainWindow(QMainWindow):
         grid.setColumnStretch(0, 3)
         grid.setColumnStretch(1, 2)
         grid.setColumnStretch(2, 2)
-        grid.setColumnStretch(3, 0)
-        return box
+        return card
 
     def _build_report(self) -> QWidget:
-        box = QGroupBox("REPORT")
-        lay = QVBoxLayout(box)
-        lay.setSpacing(10)
+        holder = QWidget()
+        holder.setObjectName("Plain")
+        lay = QVBoxLayout(holder)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        cap = QLabel("REPORT")
+        cap.setObjectName("SectionLabel")
+        lay.addWidget(cap)
         self.report_view = QTextBrowser()
         self.report_view.setOpenExternalLinks(False)
-        self.report_view.document().setDefaultStyleSheet(theme.report_document_css())
         self.report_view.setPlaceholderText(
             "The report of each run appears here, and is archived in "
             "<destination>/.applesync/reports/."
         )
-        self.report_view.setMinimumHeight(170)
-        row = QHBoxLayout()
-        self.btn_open_reports = QPushButton("Open reports folder")
-        self.btn_open_reports.setObjectName("Quiet")
-        self.btn_open_reports.clicked.connect(self._open_reports_dir)
-        row.addWidget(self.btn_open_reports)
-        row.addStretch(1)
+        self.report_view.setMinimumHeight(150)
         lay.addWidget(self.report_view, stretch=1)
-        lay.addLayout(row)
-        return box
+        return holder
 
     # ------------------------------------------------------------------ helpers
     def _dest_text(self) -> str:
         d = self.config.destination
-        return str(d) if d else "No destination chosen yet"
+        return str(d) if d else "No folder chosen yet"
 
     def _dest_ok(self) -> bool:
         d = self.config.destination
@@ -497,6 +581,48 @@ class MainWindow(QMainWindow):
         """Re-apply the stylesheet after a dynamic property changed."""
         widget.style().unpolish(widget)
         widget.style().polish(widget)
+
+    def _set_report(self, markdown: str) -> None:
+        """Render a Markdown report in the panel.
+
+        Qt's Markdown importer marks headings with a FontSizeAdjustment (+3 on
+        an h1, i.e. double size) which takes precedence over any point size a
+        stylesheet or a merged format could ask for. The heading format is
+        therefore replaced outright with the type scale, so a report title
+        reads as a title rather than as a banner."""
+        self.report_view.setMarkdown(markdown)
+        doc = self.report_view.document()
+        cursor = QTextCursor(doc)
+        block = doc.begin()
+        while block.isValid():
+            level = block.blockFormat().headingLevel()
+            if level:
+                fmt = QTextCharFormat()
+                fmt.setFontPointSize(
+                    theme.SIZE_DISPLAY if level == 1 else theme.SIZE_BODY
+                )
+                fmt.setFontWeight(QFont.DemiBold)
+                if level > 1:
+                    fmt.setForeground(QColor(self.palette_.muted))
+                cursor.setPosition(block.position())
+                cursor.setPosition(
+                    block.position() + block.length() - 1, QTextCursor.KeepAnchor
+                )
+                cursor.setCharFormat(fmt)
+            block = block.next()
+
+    def _show_plan_text(self, text: str) -> None:
+        self.plan_empty_title.hide()
+        self.plan_empty_body.hide()
+        self.plan_label.setText(text)
+        self.plan_label.show()
+
+    def _show_plan_empty(self, title: str, body: str) -> None:
+        self.plan_label.hide()
+        self.plan_empty_title.setText(title)
+        self.plan_empty_body.setText(body)
+        self.plan_empty_title.show()
+        self.plan_empty_body.show()
 
     def _on_layout_changed(self, *_):
         kind = self.layout_combo.currentData()
@@ -523,7 +649,7 @@ class MainWindow(QMainWindow):
             self.screenshots_check.setEnabled(
                 self.layout_combo.currentData() == "date"
             )
-            self.layout_lock_label.setText("frozen at the first sync")
+            self.layout_lock_label.setText("locked once the first copy runs")
             return
         kind = "date" if locked.startswith("date") else locked
         idx = self.layout_combo.findData(kind)
@@ -549,13 +675,15 @@ class MainWindow(QMainWindow):
             ready and self.ui_state == UiState.PLAN_READY and self.prepared is not None
         )
         self.btn_verify.setEnabled(ready and idle and self._dest_ok())
-        self.btn_stability.setEnabled(ready and idle)
-        # Duplicates: reads the local manifest, no device required.
-        self.btn_duplicates.setEnabled(idle and self._dest_ok())
-        # Albums: separate from the backup (device + destination required).
-        self.btn_albums.setEnabled(ready and idle and self._dest_ok())
         self.btn_cancel.setEnabled(busy)
         self.dest_btn.setEnabled(idle)
+        # Tools: albums and the stability check need the device; duplicates
+        # only read the local manifest.
+        self.act_albums.setEnabled(ready and idle and self._dest_ok())
+        self.act_stability.setEnabled(ready and idle)
+        self.act_duplicates.setEnabled(idle and self._dest_ok())
+        self.act_open_reports.setEnabled(self._dest_ok())
+        self.tools_btn.setEnabled(idle)
 
     def _show_error(self, message: str, details: str = "") -> None:
         """Errors surface inline; the modal is opt-in, for the traceback."""
@@ -584,13 +712,12 @@ class MainWindow(QMainWindow):
                 self._expected_files = inv_n or None
                 import time as _t
 
-                self.plan_empty_title.setText("Ready for the next run")
-                self.plan_empty_body.setText(
-                    f"Last completed sync "
+                self._show_plan_empty(
+                    "Ready for the next run",
+                    f"Last completed copy "
                     f"{_t.strftime('%d %b %Y at %H:%M', _t.localtime(finished))} — "
                     f"{inv_n} files inventoried ({fmt_bytes(inv_b or 0)}), "
-                    f"{cop_n} copied ({fmt_bytes(cop_b or 0)}). "
-                    f"Run the inventory to see the current delta."
+                    f"{cop_n} copied ({fmt_bytes(cop_b or 0)}).",
                 )
         except Exception:
             pass  # no manifest yet: first use
@@ -601,19 +728,14 @@ class MainWindow(QMainWindow):
         self.current_udid = udid
         tone, title, hint = STATE_STYLES[state]
         self.state_label.setText(title)
-        self.state_hint.setText(hint)
-        self.state_udid.setText(udid)
-        self.state_udid.setVisible(bool(udid))
-        self.banner.setProperty("state", tone)
-        self._repolish(self.banner)
-        self._repolish(self.status_dot)
-        if state != DeviceState.READY and self.ui_state == UiState.PLAN_READY:
-            # The device vanished between inventory and validation: the plan
-            # stays on screen but the sync will have to be prepared again.
-            self.statusBar().showMessage(
-                "Device no longer available — plug it back in and run the "
-                "inventory again."
-            )
+        self.chip.setToolTip(f"{hint}\n\n{udid}" if udid else hint)
+        self.chip.setProperty("state", tone)
+        self._repolish(self.chip)
+        self._repolish(self.chip_dot)
+        if state == DeviceState.READY:
+            self.statusBar().showMessage(udid or "Device ready")
+        else:
+            self.statusBar().showMessage(hint)
         self._refresh_buttons()
 
     # ------------------------------------------------------------------ dest
@@ -632,7 +754,7 @@ class MainWindow(QMainWindow):
 
     def _open_reports_dir(self) -> None:
         if not self._dest_ok():
-            self._show_error("No destination chosen.")
+            self._show_error("No backup folder chosen.")
             return
         d = self.config.destination / ".applesync" / "reports"
         d.mkdir(parents=True, exist_ok=True)
@@ -641,19 +763,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ prepare
     def _start_prepare(self) -> None:
         if not self._dest_ok():
-            self._show_error("Choose a destination folder first.")
+            self._show_error("Choose a backup folder first.")
             return
         self.cancel.clear()
         self.error_bar.hide()
         self.prepared = None
-        self.plan_empty_title.setText("Inventory running")
-        self.plan_empty_body.setText(
+        self._show_plan_empty(
+            "Inventory running",
             "Walking the device twice and comparing both passes. Nothing is "
-            "written during this step."
+            "written during this step.",
         )
-        self.plan_label.hide()
-        self.plan_empty_title.show()
-        self.plan_empty_body.show()
         self._set_ui_state(UiState.PREPARING)
         self.watcher.paused = True
         w = PrepareWorker(self._engine(), self.current_udid, self.cancel, self)
@@ -668,8 +787,6 @@ class MainWindow(QMainWindow):
     def _on_inventory_progress(self, n: int, phase: str) -> None:
         self.lbl_phase.setText(f"Inventory — {phase}")
         self.lbl_counts.setText(f"{n:,} files seen".replace(",", " "))
-        # Bar scaled on the last known inventory count: each pass of the double
-        # enumeration fills one half. Otherwise: busy animation.
         expected = self._expected_files
         if expected:
             if "1/2" in phase:
@@ -690,63 +807,55 @@ class MainWindow(QMainWindow):
         self._expected_files = prepared.inventory.count
         self._bar_done(True)
         inv, plan = prepared.inventory, prepared.plan
+
+        # Every line starts on the left edge and pads to the right: alignment
+        # then survives whatever the text engine does with leading spaces.
+        def row(label: str, count: int, size: int | None = None,
+                note: str = "") -> str:
+            files = f"{count:,}".replace(",", " ") + " files"
+            cell = f"{fmt_bytes(size):>11}" if size is not None else " " * 11
+            return f"{label:<20}{files:>12}   {cell}   {note}".rstrip()
+
         lines = [
-            f"{inv.count:>8,} files    {fmt_bytes(inv.total_bytes):>12}"
-            f"    inventory  ·  both passes matched  ·  "
-            f"{fmt_duration(inv.duration_s)}".replace(",", " "),
-            f"{'':>8}          {'':>12}    fingerprint {inv.fingerprint()[:20]}…",
+            row("On the device", inv.count, inv.total_bytes,
+                f"both passes matched · {fmt_duration(inv.duration_s)}"),
+            f"{'Fingerprint':<20}{inv.fingerprint()[:24]}…",
             "",
-            f"{len(plan.to_copy):>8,} files    "
-            f"{fmt_bytes(sum(f.size for f in plan.to_copy)):>12}"
-            f"    to copy".replace(",", " "),
-            f"{len(plan.already_synced):>8,} files    {'':>12}    already "
-            f"synchronised".replace(",", " "),
+            row("To copy", len(plan.to_copy),
+                sum(f.size for f in plan.to_copy)),
+            row("Already backed up", len(plan.already_synced)),
         ]
         if plan.to_adopt:
-            lines.append(
-                f"{len(plan.to_adopt):>8,} files    {'':>12}    already on disk, "
-                f"to be re-recorded".replace(",", " ")
-            )
+            lines.append(row("Already on disk", len(plan.to_adopt), None,
+                             "to be re-recorded in the manifest"))
         if plan.conflicts:
-            lines.append(
-                f"{len(plan.conflicts):>8,} files    {'':>12}    conflicts — "
-                f"copied under a versioned name, never overwritten".replace(",", " ")
-            )
+            lines.append(row("Conflicts", len(plan.conflicts), None,
+                             "copied under a versioned name, never overwritten"))
             lines.extend(
-                f"           {c.remote.path} -> {c.versioned_path}"
-                for c in plan.conflicts[:6]
+                f"{'':<20}{c.remote.path} -> {c.versioned_path}"
+                for c in plan.conflicts[:5]
             )
-            if len(plan.conflicts) > 6:
-                lines.append(f"           … and {len(plan.conflicts) - 6} more")
+            if len(plan.conflicts) > 5:
+                lines.append(f"{'':<20}… and {len(plan.conflicts) - 5} more")
         if plan.missing_on_device:
-            lines.append(
-                f"{len(plan.missing_on_device):>8,} files    {'':>12}    gone from "
-                f"the device — kept on the PC".replace(",", " ")
-            )
+            lines.append(row("Gone from the device", len(plan.missing_on_device),
+                             None, "kept on the PC"))
             lines.extend(
-                f"           {e.source_path}" for e in plan.missing_on_device[:6]
+                f"{'':<20}{e.source_path}" for e in plan.missing_on_device[:5]
             )
-            if len(plan.missing_on_device) > 6:
+            if len(plan.missing_on_device) > 5:
                 lines.append(
-                    f"           … and {len(plan.missing_on_device) - 6} more"
+                    f"{'':<20}… and {len(plan.missing_on_device) - 5} more"
                 )
-        if self.config.get("layout", "mirror") == "archive":
-            lines.append("")
-            lines.append(
-                "Archive layout: the EXIF capture date is read during the copy "
-                "and drives the file name (device date as fallback);"
-            )
-            lines.append(
-                "Live Photos go to _LivePhotos, content duplicates to _Duplicates."
-            )
         if prepared.breakdown_csv is not None:
             lines.append("")
-            lines.append(f"Breakdown exported: {prepared.breakdown_csv}")
+            lines.append(
+                f"{'Breakdown exported':<20}"
+                f".applesync/reports/{Path(prepared.breakdown_csv).name}"
+            )
         self._show_plan_text("\n".join(lines))
-        self.lbl_phase.setText("Plan ready — nothing written yet. Validate to copy.")
-        self.statusBar().showMessage(
-            "Plan ready. Validate with step 2 to start copying."
-        )
+        self.lbl_phase.setText("Plan ready — nothing written yet.")
+        self.statusBar().showMessage("Plan ready — step 2 starts the copy.")
         self.watcher.paused = False
         self._set_ui_state(UiState.PLAN_READY)
 
@@ -769,20 +878,20 @@ class MainWindow(QMainWindow):
         w.start()
 
     # -- progress bar: never frozen while something is running ---------------
-    # Convention: a phase change puts the bar in "busy" mode (continuous
-    # animation) as long as no counter is available; as soon as numbers come
-    # in, the bar becomes a real percentage.
+    # A phase change puts the bar in "busy" mode (continuous animation) as long
+    # as no counter is available; as soon as numbers come in, it becomes a real
+    # percentage.
 
     def _bar_busy(self) -> None:
         self.progress_bar.setProperty("outcome", "")
         self._repolish(self.progress_bar)
-        self.progress_bar.setRange(0, 0)          # "in progress" animation
+        self.progress_bar.setRange(0, 0)
 
-    def _bar_ratio(self, i: int, n: int) -> None:
+    def _bar_ratio(self, i: int, total: int) -> None:
         if self.progress_bar.maximum() != 1000:
             self.progress_bar.setRange(0, 1000)
-        if n > 0:
-            self.progress_bar.setValue(min(1000, int(1000 * i / n)))
+        if total > 0:
+            self.progress_bar.setValue(min(1000, int(1000 * i / total)))
 
     def _bar_done(self, success: bool) -> None:
         """Full bar either way — the colour says how it ended."""
@@ -811,19 +920,19 @@ class MainWindow(QMainWindow):
             + (f"   ETA {fmt_duration(eta)}" if eta is not None else "")
         )
 
-    def _on_verify_progress(self, i: int, n: int, path: str) -> None:
+    def _on_verify_progress(self, i: int, total: int, path: str) -> None:
         """Progress of a disk re-read (verification, adoption)."""
-        self._bar_ratio(i, n)
+        self._bar_ratio(i, total)
         self.lbl_file.setText(path or "—")
-        self.lbl_counts.setText(f"{i} / {n} files re-read")
+        self.lbl_counts.setText(f"{i} / {total} files re-read")
         self.lbl_speed.setText("—")
 
     def _on_report(self, report: RunReport) -> None:
-        self.report_view.setMarkdown(report.to_markdown())
+        self._set_report(report.to_markdown())
         self.prepared = None
         self.watcher.paused = False
         self._bar_done(report.status == COMPLETED)
-        self._refresh_layout_lock()   # the first sync just froze the layout
+        self._refresh_layout_lock()   # the first copy just froze the layout
         self._set_ui_state(UiState.IDLE)
         titles = {
             COMPLETED: "Synchronisation completed and verified.",
@@ -864,7 +973,7 @@ class MainWindow(QMainWindow):
         self._bar_done(rep.ok)
         self._set_ui_state(UiState.IDLE)
         lines = [
-            "# Destination verification",
+            "# Backup verification",
             "",
             f"- Files checked: {rep.checked_count}",
             f"- Re-read and hashed: {rep.hashed_count}",
@@ -872,7 +981,7 @@ class MainWindow(QMainWindow):
         ]
         if rep.ok:
             lines.append(
-                "- **No discrepancy: the destination is faithful to the device.**"
+                "- **No discrepancy: the backup is faithful to the device.**"
             )
         else:
             lines.append(f"- **DISCREPANCIES: {len(rep.discrepancies)}**")
@@ -880,17 +989,17 @@ class MainWindow(QMainWindow):
                 f"  - `{d.source_path}` [{d.kind}] {d.detail}"
                 for d in rep.discrepancies
             )
-        self.report_view.setMarkdown("\n".join(lines))
+        self._set_report("\n".join(lines))
         self.lbl_phase.setText(
             "Verification: no discrepancy." if rep.ok
-            else f"Verification: {len(rep.discrepancies)} DISCREPANCY(IES) — "
+            else f"Verification: {len(rep.discrepancies)} discrepancy(ies) — "
                  f"see the report."
         )
         if not rep.ok:
             self._show_error(
                 f"{len(rep.discrepancies)} discrepancy(ies) between the device "
-                f"and the destination. Full list in the report below. "
-                f"Delete nothing on the device."
+                f"and the backup. Full list in the report below. Delete nothing "
+                f"on the device."
             )
 
     # ------------------------------------------------------------------ duplicates
@@ -906,10 +1015,10 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._show_error(f"Cannot read the manifest: {e}")
             return
-        self.report_view.setMarkdown(report.to_markdown())
+        self._set_report(report.to_markdown())
         if report.scanned_count == 0:
             self.lbl_phase.setText(
-                "Duplicates: empty manifest — run a synchronisation first."
+                "Duplicates: empty manifest — copy something first."
             )
         elif report.groups:
             self.lbl_phase.setText(
@@ -953,16 +1062,16 @@ class MainWindow(QMainWindow):
         self.lbl_file.setText("PhotoData/Photos.sqlite")
         self.lbl_counts.setText(f"{fmt_bytes(done)} / {fmt_bytes(total)}")
 
-    def _on_albums_mat_progress(self, i: int, n: int) -> None:
-        self._bar_ratio(i, n)
+    def _on_albums_mat_progress(self, i: int, total: int) -> None:
+        self._bar_ratio(i, total)
         self.lbl_file.setText("—")
-        self.lbl_counts.setText(f"{i} / {n} album files copied")
+        self.lbl_counts.setText(f"{i} / {total} album files copied")
 
     def _on_albums_done(self, report, report_path: str) -> None:
         self.watcher.paused = False
         self._bar_done(not report.unmatched)
         self._set_ui_state(UiState.IDLE)
-        self.report_view.setMarkdown(report.to_markdown())
+        self._set_report(report.to_markdown())
         state = (
             f"Albums: {report.albums_count} folders, "
             f"{report.copies_created} files copied "
@@ -980,7 +1089,7 @@ class MainWindow(QMainWindow):
         self.error_bar.hide()
         self._set_ui_state(UiState.STABILITY)
         self.watcher.paused = True
-        self.report_view.setMarkdown(
+        self._set_report(
             "# Stability check running\n\nThree full inventories will be taken. "
             "Between each pass, follow the instruction shown above the progress "
             "bar: unplug the device, then plug it back in."
@@ -1001,7 +1110,7 @@ class MainWindow(QMainWindow):
         self.watcher.paused = False
         self._bar_done(result.stable)
         self._set_ui_state(UiState.IDLE)
-        lines = ["# Stability check (success criterion)", ""]
+        lines = ["# Stability check", ""]
         for r in result.rounds:
             lines.append(
                 f"- Pass {r.index}: {r.count} files, {fmt_bytes(r.total_bytes)}, "
@@ -1011,7 +1120,7 @@ class MainWindow(QMainWindow):
         lines.append("```")
         lines.append(result.verdict())
         lines.append("```")
-        self.report_view.setMarkdown("\n".join(lines))
+        self._set_report("\n".join(lines))
         self.lbl_phase.setText(
             "Stability check: STABLE — three identical inventories."
             if result.stable

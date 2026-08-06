@@ -58,11 +58,16 @@ def main() -> int:
 
         backend = AfcBackend()
 
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
-    from applesync.ui.main_window import MainWindow
+    from applesync.ui.main_window import ASSETS, MainWindow
 
     app = QApplication(sys.argv)
+    app.setApplicationName("AppleSync")
+    icon = ASSETS / "icon.png"
+    if icon.exists():
+        app.setWindowIcon(QIcon(str(icon)))
     win = MainWindow(backend, simulate=args.simulate)
     win.show()
     return app.exec()

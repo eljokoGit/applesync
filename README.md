@@ -104,8 +104,10 @@ in the destination folder, not in the software.
 
 ## Usage
 
-1. Plug the device in, unlock it, accept "Trust This Computer". The state
-   banner turns green.
+The window is the flow: three numbered steps, top to bottom.
+
+1. Plug the device in, unlock it, accept "Trust This Computer". The chip in
+   the header turns green.
 2. Choose the destination folder and the **layout** — decide before the first
    synchronisation, as it is then frozen for that destination:
    - *Mirror*: the device tree as it is;
@@ -114,15 +116,18 @@ in the destination folder, not in the software.
    - *Archive*: `YYYY/YYYY-MM/YYYY-MM-DD HH-MM-SS.ext` (renamed after the
      EXIF capture date, file date as fallback), Live Photo videos in
      `_LivePhotos/`, content duplicates filed in `_Duplicates/`.
-3. **Inventory**: double enumeration, delta presented for validation. Nothing
-   is written at this stage.
-4. **Synchronise**: copy, then automatic deep verification and final report.
+3. **Run inventory**: double enumeration, delta presented for validation.
+   Nothing is written at this stage.
+4. **Copy to PC**: copy, then automatic deep verification and final report.
+5. **Verify**: re-reads and re-hashes the whole destination against a fresh
+   device inventory, at any time, independently of a copy.
 
-The other buttons: **Verify destination** (full re-check at any time),
-**Duplicates** (groups of files with identical content — report only, nothing
-deleted), **Albums** (rebuilds the device's albums and favourites as folders
-of copies), **Stability check** (three inventories with an unplug between
-each, to prove enumeration is reproducible).
+The **Tools** menu holds what is used occasionally rather than every time:
+*Rebuild albums and favourites* (each album becomes a folder of copies),
+*List content duplicates* (report only, nothing deleted), *Run stability
+check* (three inventories with an unplug between each, to prove enumeration is
+reproducible), *Open reports folder*, and *Appearance* — light, dark, or
+follow Windows.
 
 Interrupting is always safe: the stop button, a screen lock or an unplugged
 cable all lead to the same outcome — what is copied is kept, and the current

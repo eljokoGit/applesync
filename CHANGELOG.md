@@ -5,6 +5,45 @@ This project follows [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-08-06
+
+Interface only, again: the core, the device layer and the tests are untouched
+and the 110 tests pass unchanged.
+
+### Added
+
+- Dark and light palettes. The application follows the Windows colour scheme
+  by default; **Tools > Appearance** forces one and remembers the choice.
+- A **Tools** menu holding what is used once rather than every time: album and
+  favourite rebuild, content-duplicate listing, the three-inventory stability
+  check, and a shortcut to the reports folder.
+- `applesync/ui/assets/`: drop an `icon.png` in there and it becomes the
+  window and taskbar icon. Nothing breaks if it is absent.
+
+### Changed
+
+- The window is now the flow: three numbered steps — inventory, copy, verify —
+  instead of a row of seven equal buttons. The stability check no longer sits
+  in the middle of the daily path.
+- Device state is a chip in the header, next to the application name, visible
+  whatever the window is doing; its tooltip carries the actionable message and
+  the UDID.
+- **Stop** sits next to the running phase rather than inside a step, since it
+  stops whatever is running.
+- The inventory plan is laid out as left-anchored columns and no longer wraps,
+  so a long path can no longer shift the figures out of alignment.
+
+### Fixed
+
+- The plan text was rendering in the proportional UI font: a stylesheet
+  `font-family` overrides `setFont()`, so the monospaced face is now requested
+  from the stylesheet. Columns actually line up.
+- Report headings were rendering at double size. Qt's Markdown importer sets a
+  font-size *adjustment* on headings that takes precedence over any point size
+  a stylesheet asks for; the heading format is now replaced outright.
+- A long export path in the plan could overflow its panel and paint over the
+  next step.
+
 ## [1.1.0] — 2026-08-06
 
 Interface only. No change to the backup engine: the core, the device layer and
@@ -70,6 +109,7 @@ First public release.
 - No write operation towards the device exists in the code: deleting or
   modifying data on the device is impossible by construction, not by policy.
 
-[Unreleased]: https://github.com/eljokoGit/applesync/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/eljokoGit/applesync/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/eljokoGit/applesync/releases/tag/v1.2.0
 [1.1.0]: https://github.com/eljokoGit/applesync/releases/tag/v1.1.0
 [1.0.0]: https://github.com/eljokoGit/applesync/releases/tag/v1.0.0
