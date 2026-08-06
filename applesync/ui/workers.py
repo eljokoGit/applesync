@@ -1,8 +1,8 @@
-"""Threads de travail : tout accès appareil/disque hors du thread UI.
+"""Worker threads: every device/disk access happens off the UI thread.
 
-Chaque worker est un QThread ; la communication se fait exclusivement par
-signaux Qt (connexions en file, donc thread-safe). Les workers reçoivent un
-`threading.Event` d'annulation ; l'UI le déclenche pour interrompre proprement.
+Each worker is a QThread; communication goes exclusively through Qt signals
+(queued connections, therefore thread-safe). Workers receive a
+`threading.Event` for cancellation, which the UI sets to stop cleanly.
 """
 
 from __future__ import annotations
@@ -14,15 +14,15 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from applesync.core.engine import PreparedRun, ProgressSnapshot, SyncEngine
+from applesync.core.engine import PreparedRun, SyncEngine
 from applesync.core.manifest import Manifest
-from applesync.core.stability import StabilityResult, run_stability_check
+from applesync.core.stability import run_stability_check
 from applesync.core.verifier import verify_against_inventory
 from applesync.device.base import DeviceBackend, DeviceState, UsbmuxdUnavailableError
 
 
 class UpdateCheckWorker(QThread):
-    """Interroge GitHub une fois au démarrage. Muet s'il n'y a rien à dire."""
+    """Ask GitHub once at start-up. Silent when there is nothing to report."""
 
     update_available = Signal(object)      # UpdateInfo
 
@@ -39,7 +39,7 @@ class UpdateCheckWorker(QThread):
 
 
 class DeviceWatcher(QThread):
-    """Surveille le bus USB et publie l'état actionnable de l'appareil."""
+    """Watch the USB bus and publish the actionable device state."""
 
     state_changed = Signal(object, str)   # (DeviceState | None, udid)
 
@@ -49,7 +49,7 @@ class DeviceWatcher(QThread):
         super().__init__(parent)
         self.backend = backend
         self._stop = threading.Event()
-        self.paused = False               # True pendant une synchro active
+        self.paused = False               # True while a sync is running
 
     def stop(self) -> None:
         self._stop.set()
@@ -78,14 +78,15 @@ class DeviceWatcher(QThread):
 
 
 class PrepareWorker(QThread):
-    """Phase 1 : inventaire (double énumération) + plan. N'écrit rien."""
+    """Phase 1: inventory (double enumeration) + plan. Writes nothing."""
 
     phase = Signal(str)
     inventory_progress = Signal(int, str)
     done = Signal(object)                # PreparedRun
     failed = Signal(str, str)            # (message, traceback)
 
-    def __init__(self, engine: SyncEngine, udid: str, cancel: threading.Event, parent=None):
+    def __init__(self, engine: SyncEngine, udid: str, cancel: threading.Event,
+                 parent=None):
         super().__init__(parent)
         self.engine = engine
         self.udid = udid
@@ -105,11 +106,11 @@ class PrepareWorker(QThread):
 
 
 class ExecuteWorker(QThread):
-    """Phase 2 : copie + vérification + rapport, sur un plan validé."""
+    """Phase 2: copy + verification + report, on a validated plan."""
 
     phase = Signal(str)
     progress = Signal(object)            # ProgressSnapshot
-    verify_progress = Signal(int, int, str)   # (n_faits, n_total, fichier)
+    verify_progress = Signal(int, int, str)   # (done, total, file)
     done = Signal(object)                # RunReport
     failed = Signal(str, str)
 
@@ -143,7 +144,8 @@ class ExecuteWorker(QThread):
 
 
 class VerifyWorker(QThread):
-    """Vérification autonome de TOUTE la destination contre un inventaire frais."""
+    """Standalone verification of the WHOLE destination against a fresh
+    inventory."""
 
     phase = Signal(str)
     progress = Signal(int, int, str)
@@ -163,13 +165,13 @@ class VerifyWorker(QThread):
         try:
             from applesync.core.inventory import take_inventory
 
-            self.phase.emit("Inventaire frais de l'iPhone (double énumération)…")
+            self.phase.emit("Fresh device inventory (double enumeration)…")
             session = self.backend.connect(self.udid)
             try:
                 inventory = take_inventory(session, cancel=self.cancel.is_set)
             finally:
                 session.close()
-            self.phase.emit("Relecture de la destination…")
+            self.phase.emit("Re-reading the destination…")
             with Manifest(self.dest_root) as manifest:
                 report = verify_against_inventory(
                     inventory.files,
@@ -185,14 +187,14 @@ class VerifyWorker(QThread):
 
 
 class AlbumsWorker(QThread):
-    """Récupération des albums : copie Photos.sqlite, parse, matérialise.
+    """Album recovery: copy Photos.sqlite, parse it, materialise the albums.
 
-    Option totalement à part de la sauvegarde : son échec n'affecte rien."""
+    Entirely separate from the backup: its failure affects nothing."""
 
     phase = Signal(str)
-    progress = Signal(int, int)          # (octets copiés, octets total) de la base
-    mat_progress = Signal(int, int)      # (fichiers d'albums copiés, total)
-    done = Signal(object, str)           # (AlbumsReport, chemin du rapport md)
+    progress = Signal(int, int)          # (bytes copied, total) of the database
+    mat_progress = Signal(int, int)      # (album files copied, total)
+    done = Signal(object, str)           # (AlbumsReport, markdown report path)
     failed = Signal(str, str)
 
     def __init__(self, backend: DeviceBackend, udid: str, dest_root: Path,
@@ -212,10 +214,10 @@ class AlbumsWorker(QThread):
                 save_report,
             )
 
-            self.phase.emit("Connexion à l'appareil…")
+            self.phase.emit("Connecting to the device…")
             session = self.backend.connect(self.udid)
             try:
-                self.phase.emit("Copie de la base Photos (~2 Gio)…")
+                self.phase.emit("Copying the Photos database…")
                 db = fetch_photos_db(
                     session,
                     self.dest_root / ".applesync" / "photodata",
@@ -225,9 +227,9 @@ class AlbumsWorker(QThread):
                 )
             finally:
                 session.close()
-            self.phase.emit("Analyse des albums (schéma vérifié)…")
+            self.phase.emit("Parsing the albums (schema verified)…")
             data = parse_albums(db)
-            self.phase.emit("Création des dossiers d'albums (copies)…")
+            self.phase.emit("Building the album folders (copies)…")
             with Manifest(self.dest_root) as m:
                 report = materialize_albums(
                     data, m, self.dest_root,
@@ -240,10 +242,10 @@ class AlbumsWorker(QThread):
 
 
 class StabilityWorker(QThread):
-    """Critère de réussite : 3 inventaires identiques, débranchement entre chaque."""
+    """Success criterion: 3 identical inventories, unplugged in between."""
 
     phase = Signal(str)
-    instruction = Signal(str)            # consigne à l'utilisateur (débrancher…)
+    instruction = Signal(str)            # instruction to the user (unplug…)
     inventory_progress = Signal(int, str)
     done = Signal(object)                # StabilityResult
     failed = Signal(str, str)
@@ -260,30 +262,30 @@ class StabilityWorker(QThread):
     def _wait_replug(self, next_round: int) -> None:
         if self.simulate:
             self.instruction.emit(
-                f"(Simulation) Débranchement/rebranchement simulé avant la passe {next_round}."
+                f"(Simulation) Unplug/replug simulated before pass {next_round}."
             )
             time.sleep(1.0)
             return
         self.instruction.emit(
-            f"Passe {next_round - 1} terminée. DÉBRANCHEZ l'iPhone maintenant."
+            f"Pass {next_round - 1} done. UNPLUG the device now."
         )
         while not self.cancel.is_set():
             if not any(d.udid == self.udid for d in self._safe_list()):
                 break
             time.sleep(1.0)
-        self.instruction.emit("Rebranchez l'iPhone et déverrouillez-le…")
+        self.instruction.emit("Plug the device back in and unlock it…")
         while not self.cancel.is_set():
             if any(d.udid == self.udid for d in self._safe_list()):
                 if self.backend.probe_state(self.udid) == DeviceState.READY:
                     break
             time.sleep(1.0)
         if self.cancel.is_set():
-            raise InterruptedError("test de stabilité interrompu")
-        self.instruction.emit(f"Appareil prêt — passe {next_round} en cours…")
+            raise InterruptedError("stability check interrupted")
+        self.instruction.emit(f"Device ready — pass {next_round} running…")
 
     def _safe_list(self):
-        """list_devices tolérant : usbmuxd qui tombe pendant l'attente de
-        rebranchement = appareil considéré absent, on continue d'attendre."""
+        """Tolerant list_devices: if usbmuxd drops while waiting for the
+        replug, treat the device as absent and keep waiting."""
         try:
             return self.backend.list_devices()
         except UsbmuxdUnavailableError:

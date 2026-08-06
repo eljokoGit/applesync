@@ -1,32 +1,38 @@
-"""Inventaire avec défense contre la troncature silencieuse.
+"""Inventory, with a defence against silent truncation.
 
-Le contrat DeviceSession promet qu'une énumération terminée sans exception est
-complète. On ne s'y fie pas : l'inventaire énumère DEUX fois et compare les
-ensembles (chemin, taille, mtime). Le moindre écart → InventoryMismatchError
-avec la liste nominative des différences. C'est exactement le défaut MTP
-observé (164 puis 124 puis 185 dossiers sans erreur) qu'on refuse de laisser
-passer.
+The DeviceSession contract promises that an enumeration finishing without an
+exception is complete. We do not take its word for it: the inventory
+enumerates TWICE and compares the (path, size, mtime) sets. The slightest
+difference raises InventoryMismatchError with the offending names. This is
+exactly the MTP defect this project exists to refuse — enumerations returning
+164, then 124, then 185 folders without ever raising.
 
-Un inventaire qui échoue n'existe pas : pas d'objet partiel, une exception.
+An inventory that fails does not exist: no partial object, an exception.
+
+Known limit: both passes happen inside the same device session, so they catch
+non-deterministic truncation, not a truncation that would be stable for the
+whole session. The defences against that live outside: the stability check
+(one fresh session per pass, see core/stability.py) and comparing the count
+against what the device itself reports.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 from applesync.device.base import DeviceSession, RemoteFile
 
 
 class InventoryError(Exception):
-    """Inventaire impossible ou non fiable — on s'arrête."""
+    """Inventory impossible or untrustworthy — we stop."""
 
 
 class InventoryMismatchError(InventoryError):
-    """Les deux énumérations divergent : énumération non fiable.
+    """The two enumerations disagree: enumeration is not trustworthy.
 
-    `only_first` / `only_second` : chemins vus dans une seule des deux passes.
+    `only_first` / `only_second`: paths seen in only one of the two passes.
     """
 
     def __init__(self, only_first: list[str], only_second: list[str]):
@@ -34,24 +40,23 @@ class InventoryMismatchError(InventoryError):
         self.only_second = sorted(only_second)
         preview = ", ".join((self.only_first + self.only_second)[:5])
         super().__init__(
-            f"Énumérations divergentes : {len(self.only_first)} fichier(s) vus "
-            f"uniquement à la 1re passe, {len(self.only_second)} uniquement à "
-            f"la 2de (ex. : {preview}). Inventaire NON fiable, aucune copie "
-            f"ne sera lancée."
+            f"Enumerations disagree: {len(self.only_first)} file(s) seen only "
+            f"in pass 1, {len(self.only_second)} only in pass 2 "
+            f"(e.g. {preview}). Inventory NOT trustworthy, no copy will start."
         )
 
 
 class InventoryCancelledError(InventoryError):
-    """Interruption demandée par l'utilisateur pendant l'inventaire."""
+    """The user asked to stop during the inventory."""
 
 
 @dataclass(frozen=True)
 class Inventory:
-    """Inventaire complet et vérifié (double énumération concordante)."""
+    """A complete, verified inventory (two matching enumerations)."""
 
     device_udid: str
     taken_at: float                      # epoch
-    files: tuple[RemoteFile, ...]        # triés par chemin
+    files: tuple[RemoteFile, ...]        # sorted by path
     duration_s: float
     double_checked: bool
 
@@ -64,10 +69,10 @@ class Inventory:
         return sum(f.size for f in self.files)
 
     def fingerprint(self) -> str:
-        """Empreinte stable de l'inventaire : sha256 des lignes (path, size, mtime).
+        """Stable fingerprint: sha256 over the (path, size, mtime) lines.
 
-        Deux inventaires identiques → même empreinte. Utilisé par le test de
-        stabilité (critère de réussite : 3 inventaires identiques).
+        Two identical inventories produce the same fingerprint. Used by the
+        stability check (success criterion: three identical inventories).
         """
         import hashlib
 
@@ -77,7 +82,7 @@ class Inventory:
         return h.hexdigest()
 
 
-ProgressCb = Callable[[int, str], None]  # (n_fichiers_vus, phase)
+ProgressCb = Callable[[int, str], None]  # (files_seen, phase)
 
 
 def _enumerate_once(
@@ -89,11 +94,11 @@ def _enumerate_once(
     seen: dict[str, RemoteFile] = {}
     for f in session.walk_dcim():
         if cancel is not None and cancel():
-            raise InventoryCancelledError("inventaire interrompu par l'utilisateur")
+            raise InventoryCancelledError("inventory cancelled by the user")
         if f.path in seen:
-            # Un même chemin livré deux fois est aussi un signe d'énumération
-            # malade : on refuse.
-            raise InventoryError(f"chemin énuméré en double : {f.path}")
+            # The same path delivered twice is another symptom of a sick
+            # enumeration: refuse it.
+            raise InventoryError(f"path enumerated twice: {f.path}")
         seen[f.path] = f
         if progress_cb is not None and len(seen) % 100 == 0:
             progress_cb(len(seen), phase)
@@ -108,22 +113,24 @@ def take_inventory(
     cancel: Optional[Callable[[], bool]] = None,
     double_check: bool = True,
 ) -> Inventory:
-    """Inventaire complet, vérifié par double énumération.
+    """Full inventory, verified by double enumeration.
 
-    Toute erreur d'appareil se propage telle quelle (échec bruyant).
-    `double_check=False` n'existe que pour les mesures de durée ; la synchro
-    passe toujours par double_check=True.
+    Any device error propagates as-is (fail loudly). `double_check=False`
+    exists only for timing measurements; synchronisation always runs with
+    double_check=True.
     """
     start = time.time()
     udid = session.device_info().udid
 
-    first = _enumerate_once(session, "énumération 1/2" if double_check else "énumération", progress_cb, cancel)
+    first = _enumerate_once(
+        session, "pass 1/2" if double_check else "enumerating", progress_cb, cancel
+    )
 
     if double_check:
-        second = _enumerate_once(session, "énumération 2/2", progress_cb, cancel)
+        second = _enumerate_once(session, "pass 2/2", progress_cb, cancel)
         only_first = [p for p in first if p not in second]
         only_second = [p for p in second if p not in first]
-        # Divergence de métadonnées sur un même chemin = divergence aussi.
+        # Differing metadata on the same path counts as a divergence too.
         for p in first:
             if p in second and first[p].identity != second[p].identity:
                 only_first.append(p)

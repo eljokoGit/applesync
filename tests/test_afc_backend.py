@@ -1,8 +1,8 @@
-"""Backend AFC sans appareil : distinction « usbmuxd absent » / « iPhone absent ».
+"""AFC backend without hardware: telling "usbmuxd missing" from "no device".
 
-Ces tests n'exigent aucun iPhone : ils pointent le backend vers un port TCP
-mort pour vérifier que l'indisponibilité d'usbmuxd remonte comme un état
-distinct et actionnable, jamais confondu avec « aucun appareil ».
+These tests need no iPhone: they point the backend at a dead TCP port to check
+that an unreachable usbmuxd surfaces as its own actionable state, never
+confused with "no device connected".
 """
 
 import pytest
@@ -10,15 +10,15 @@ import pytest
 from applesync.device.base import DeviceState, UsbmuxdUnavailableError
 
 
-def _backend_port_mort():
+def _backend_on_dead_port():
     from applesync.device.afc import AfcBackend
 
-    # Port 9 (discard) : rien n'écoute dessus en local.
+    # Port 9 (discard): nothing listens there locally.
     return AfcBackend(usbmux_address="127.0.0.1:9")
 
 
-def test_usbmuxd_injoignable_est_une_erreur_dediee():
-    backend = _backend_port_mort()
+def test_unreachable_usbmuxd_raises_its_own_error():
+    backend = _backend_on_dead_port()
     try:
         with pytest.raises(UsbmuxdUnavailableError):
             backend.list_devices()
@@ -26,9 +26,9 @@ def test_usbmuxd_injoignable_est_une_erreur_dediee():
         backend.shutdown()
 
 
-def test_probe_state_rend_no_usbmuxd():
-    backend = _backend_port_mort()
+def test_probe_state_reports_no_usbmuxd():
+    backend = _backend_on_dead_port()
     try:
-        assert backend.probe_state("UDID-QUELCONQUE") == DeviceState.NO_USBMUXD
+        assert backend.probe_state("ANY-UDID") == DeviceState.NO_USBMUXD
     finally:
         backend.shutdown()

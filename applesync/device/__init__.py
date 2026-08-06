@@ -1,6 +1,6 @@
-"""Couche d'accès appareil.
+"""Device-access layer.
 
-`base` définit le contrat abstrait. Deux implémentations :
-- `afc` : appareil réel via pymobiledevice3 (usbmuxd + lockdown + AFC)
-- `simulator` : DCIM simulé avec injection de pannes, pour les tests
+`base` defines the abstract contract. Two implementations:
+- `afc`: a real device through pymobiledevice3 (usbmuxd + lockdown + AFC)
+- `simulator`: a simulated library with fault injection, for the tests
 """

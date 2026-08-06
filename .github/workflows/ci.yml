@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows est la plateforme cible ; Linux garde le cœur portable.
+        # Windows is the target platform; Linux keeps the core portable.
         os: [windows-latest, ubuntu-latest]
         python: ["3.12", "3.13"]
     steps:
@@ -31,18 +31,18 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
 
-      - name: Installer le paquet et ses dépendances de test
+      - name: Install the package and its test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
-      - name: Exécuter la suite de tests
+      - name: Run the test suite
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest tests -q
 
   build:
-    name: Construction des paquets
+    name: Build the packages
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +51,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Construire la distribution source et la roue
+      - name: Build the source distribution and the wheel
         run: |
           python -m pip install --upgrade pip build twine
           python -m build

@@ -1,12 +1,12 @@
-"""Point d'entrée : `python -m applesync` (réel) ou `python -m applesync --simulate`.
+"""Entry point: `applesync`, or `python -m applesync [--simulate]`.
 
-Mode simulation : iPhone factice (~300 fichiers, ~250 Mo) pour prendre en main
-l'UI et démontrer le comportement sans appareil. Des pannes peuvent être
-injectées pour VOIR l'application refuser un inventaire douteux :
+Simulation mode: a fake device (~300 files) to try the UI and demonstrate the
+behaviour without hardware. Faults can be injected to SEE the application
+refuse a doubtful inventory:
 
-    python -m applesync --simulate --sim-fault truncate
-    python -m applesync --simulate --sim-fault disconnect-walk
-    python -m applesync --simulate --sim-fault locked
+    applesync --simulate --sim-fault truncate
+    applesync --simulate --sim-fault disconnect-walk
+    applesync --simulate --sim-fault locked
 """
 
 from __future__ import annotations
@@ -19,19 +19,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="applesync")
     parser.add_argument(
         "--simulate", action="store_true",
-        help="iPhone simulé (aucun appareil requis)",
+        help="simulated device (no hardware required)",
     )
     parser.add_argument(
         "--sim-fault",
         choices=["truncate", "disconnect-walk", "locked"],
         default=None,
-        help="panne injectée dans le simulateur (avec --simulate)",
+        help="fault injected into the simulator (with --simulate)",
     )
     parser.add_argument(
         "--probe-albums",
         action="store_true",
-        help="sonde de faisabilité : PhotoData/Photos.sqlite est-il lisible "
-             "par AFC ? (iPhone branché requis, lecture seule, sans UI)",
+        help="feasibility probe: is PhotoData/Photos.sqlite readable over AFC? "
+             "(device required, strictly read-only, no UI)",
     )
     args = parser.parse_args()
 
@@ -39,14 +39,14 @@ def main() -> int:
         return probe_albums()
 
     if args.sim_fault and not args.simulate:
-        parser.error("--sim-fault nécessite --simulate")
+        parser.error("--sim-fault requires --simulate")
 
     if args.simulate:
         from applesync.device.simulator import FaultPlan, SimProfile, SimulatedBackend
 
         faults = FaultPlan()
         if args.sim_fault == "truncate":
-            # Toutes les 2e énumérations divergent → l'inventaire doit refuser.
+            # Every second enumeration diverges -> the inventory must refuse.
             faults = FaultPlan(truncate_on_walk_index=2, truncate_drop_count=7)
         elif args.sim_fault == "disconnect-walk":
             faults = FaultPlan(disconnect_after_entries=120)
@@ -69,10 +69,10 @@ def main() -> int:
 
 
 def probe_albums() -> int:
-    """Faisabilité « albums » : la base Photos.sqlite est-elle lisible par AFC ?
+    """Album feasibility: is the Photos database readable over AFC?
 
-    Lecture seule stricte : listdir + stat + lecture des 16 premiers octets.
-    Verdict imprimé, code 0 si la route directe est ouverte.
+    Strictly read-only: listdir + stat + reading the first 16 bytes. Prints a
+    verdict; exit code 0 when the direct route is open.
     """
     from applesync.device.afc import AfcBackend
 
@@ -80,44 +80,44 @@ def probe_albums() -> int:
     try:
         devices = backend.list_devices()
         if not devices:
-            print("VERDICT: PAS D'IPHONE — branchez et déverrouillez l'appareil.")
+            print("VERDICT: NO DEVICE — plug in and unlock the device.")
             return 1
         session = backend.connect(devices[0].udid)
         try:
-            afc, loop = session._afc, session._loop   # accès brut au jail Media
+            afc, loop = session._afc, session._loop   # raw Media jail access
 
-            print("--- racine du jail AFC (/var/mobile/Media) ---")
-            racine = loop.call(afc.listdir("/"))
-            print("  " + ", ".join(sorted(racine)))
+            print("--- AFC jail root (/var/mobile/Media) ---")
+            root = loop.call(afc.listdir("/"))
+            print("  " + ", ".join(sorted(root)))
 
-            if "PhotoData" not in racine:
-                print("VERDICT: FERMÉ — PhotoData invisible par AFC (route backup seulement).")
+            if "PhotoData" not in root:
+                print("VERDICT: CLOSED — PhotoData not visible over AFC.")
                 return 2
 
             print("--- stat /PhotoData/Photos.sqlite ---")
             st = loop.call(afc.stat("/PhotoData/Photos.sqlite"))
-            taille = int(st.get("st_size", 0))
-            print(f"  taille : {taille} octets")
+            size = int(st.get("st_size", 0))
+            print(f"  size: {size} bytes")
 
-            print("--- lecture des 16 premiers octets ---")
+            print("--- reading the first 16 bytes ---")
             handle = loop.call(afc.fopen("/PhotoData/Photos.sqlite", "r"))
             try:
-                tete = loop.call(afc.fread(handle, 16))
+                head = loop.call(afc.fread(handle, 16))
             finally:
                 loop.call(afc.fclose(handle))
-            attendu = b"SQLite format 3\x00"
-            print(f"  lu : {tete!r}")
-            if tete == attendu and taille > 0:
-                print("VERDICT: OUVERT — Photos.sqlite lisible par AFC, "
-                      "la récupération des albums est faisable en direct.")
+            expected = b"SQLite format 3\x00"
+            print(f"  read: {head!r}")
+            if head == expected and size > 0:
+                print("VERDICT: OPEN — Photos.sqlite is readable over AFC, "
+                      "album recovery works directly.")
                 return 0
-            print("VERDICT: DOUTEUX — lisible mais en-tête inattendu, à analyser.")
+            print("VERDICT: DOUBTFUL — readable but unexpected header.")
             return 3
         finally:
             session.close()
     except Exception as e:
-        print(f"VERDICT: FERMÉ — {type(e).__name__}: {e}")
-        print("(PhotoData refusé par AFC : il resterait la route backup complet.)")
+        print(f"VERDICT: CLOSED — {type(e).__name__}: {e}")
+        print("(PhotoData refused over AFC on this iOS version.)")
         return 2
     finally:
         backend.shutdown()

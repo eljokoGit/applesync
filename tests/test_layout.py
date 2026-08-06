@@ -1,4 +1,4 @@
-"""Stratégies d'organisation : cibles exactes, appariement Live Photo/AAE."""
+"""Layout strategies: exact targets, Live Photo / AAE pairing."""
 
 import time
 
@@ -20,49 +20,49 @@ def _f(path: str, mtime: int, size: int = 1000) -> RemoteFile:
     return RemoteFile(path=path, size=size, mtime=mtime)
 
 
-# mtime de référence : 2024-08-15 14:30:22 heure locale
+# Reference mtime: 2024-08-15 14:30:22 local time
 T = int(time.mktime((2024, 8, 15, 14, 30, 22, 0, 0, -1)))
 
 
-def test_miroir_passthrough():
+def test_mirror_is_passthrough():
     assert MirrorLayout().target_for(_f("100APPLE/IMG_0001.HEIC", T)) == \
         "100APPLE/IMG_0001.HEIC"
 
 
-def test_date_annee_mois_nom_conserve():
-    lay = DateLayout(captures_apart=False)
+def test_date_layout_keeps_original_names():
+    lay = DateLayout(screenshots_apart=False)
     assert lay.target_for(_f("100APPLE/IMG_0001.HEIC", T)) == \
         "2024/2024-08/IMG_0001.HEIC"
-    # PNG non séparé quand l'option est désactivée
+    # PNG not separated when the option is off
     assert lay.target_for(_f("100APPLE/IMG_0002.PNG", T)) == \
         "2024/2024-08/IMG_0002.PNG"
 
 
-def test_date_captures_a_part():
-    lay = DateLayout(captures_apart=True)
+def test_date_layout_with_screenshots_apart():
+    lay = DateLayout(screenshots_apart=True)
     assert lay.target_for(_f("100APPLE/IMG_0002.PNG", T)) == \
-        "2024/2024-08/Captures/IMG_0002.PNG"
-    # Les MP4 sont des vidéos normales (messagerie, imports) : flux mensuel,
-    # jamais dans Captures.
+        "2024/2024-08/Screenshots/IMG_0002.PNG"
+    # MP4s are ordinary videos (messaging, imports): monthly flow, never in
+    # Screenshots.
     assert lay.target_for(_f("100APPLE/IMG_0003.MP4", T)) == \
         "2024/2024-08/IMG_0003.MP4"
     assert lay.target_for(_f("100APPLE/IMG_0001.HEIC", T)) == \
         "2024/2024-08/IMG_0001.HEIC"
 
 
-def test_archive_renommage_horodate():
+def test_archive_renames_with_a_timestamp():
     lay = ArchiveLayout()
     lay.begin([])
     assert lay.target_for(_f("100APPLE/IMG_0001.HEIC", T)) == \
         "2024/2024-08/2024-08-15 14-30-22.heic"
 
 
-def test_archive_live_photo_appariee():
-    """Le MOV d'une Live Photo (photo de même nom, même dossier) part dans
-    _LivePhotos et prend l'horodatage de SA photo."""
+def test_archive_pairs_live_photos():
+    """The MOV of a Live Photo (photo of the same name, same folder) goes to
+    _LivePhotos and takes the timestamp of ITS photo."""
     photo = _f("100APPLE/IMG_0001.HEIC", T)
-    live = _f("100APPLE/IMG_0001.MOV", T + 5)      # mtime légèrement décalé
-    video = _f("100APPLE/IMG_0002.MOV", T + 100)   # vraie vidéo, sans photo
+    live = _f("100APPLE/IMG_0001.MOV", T + 5)      # slightly offset mtime
+    video = _f("100APPLE/IMG_0002.MOV", T + 100)   # real video, no photo
     lay = ArchiveLayout()
     lay.begin([photo, live, video])
     assert lay.target_for(photo) == "2024/2024-08/2024-08-15 14-30-22.heic"
@@ -71,35 +71,35 @@ def test_archive_live_photo_appariee():
     assert lay.target_for(video) == "2024/2024-08/2024-08-15 14-32-02.mov"
 
 
-def test_archive_aae_suit_sa_photo():
+def test_archive_aae_follows_its_photo():
     photo = _f("100APPLE/IMG_0001.HEIC", T)
-    aae = _f("100APPLE/IMG_0001.AAE", T + 86400 * 30)   # retouche un mois après
+    aae = _f("100APPLE/IMG_0001.AAE", T + 86400 * 30)   # edited a month later
     lay = ArchiveLayout()
     lay.begin([photo, aae])
-    # L'AAE reste dans le dossier mensuel de la photo, même horodatage
+    # The AAE stays in the photo's monthly folder, with its timestamp
     assert lay.target_for(aae) == "2024/2024-08/2024-08-15 14-30-22.aae"
 
 
-def test_archive_appariement_limite_au_meme_dossier():
+def test_archive_pairing_is_limited_to_the_same_folder():
     photo = _f("100APPLE/IMG_0001.HEIC", T)
-    autre = _f("101APPLE/IMG_0001.MOV", T + 5)   # même nom, AUTRE dossier
+    other = _f("101APPLE/IMG_0001.MOV", T + 5)   # same name, ANOTHER folder
     lay = ArchiveLayout()
-    lay.begin([photo, autre])
-    assert lay.target_for(autre).startswith("2024/")       # pas _LivePhotos
+    lay.begin([photo, other])
+    assert lay.target_for(other).startswith("2024/")       # not _LivePhotos
 
 
-def test_fabrique_et_ids():
-    assert make_layout("miroir").id == "miroir"
+def test_factory_and_ids():
+    assert make_layout("mirror").id == "mirror"
     assert make_layout("date").id == "date"
-    assert make_layout("date", captures_apart=True).id == "date+captures"
+    assert make_layout("date", screenshots_apart=True).id == "date+screenshots"
     assert make_layout("archive").id == "archive"
-    for lid in ("miroir", "date", "date+captures", "archive"):
+    for lid in ("mirror", "date", "date+screenshots", "archive"):
         assert layout_from_id(lid).id == lid
-        assert label_for(lid) != lid   # libellé humain défini
+        assert label_for(lid) != lid   # a human label is defined
     with pytest.raises(ValueError):
-        make_layout("inconnu")
+        make_layout("unknown")
 
 
-def test_erreur_verrou_message_actionnable():
-    e = LayoutLockedError("miroir", "archive")
-    assert "figée" in str(e) and "Miroir" in str(e)
+def test_lock_error_message_is_actionable():
+    e = LayoutLockedError("mirror", "archive")
+    assert "frozen" in str(e) and "Mirror" in str(e)

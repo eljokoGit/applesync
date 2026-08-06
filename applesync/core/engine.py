@@ -1,16 +1,16 @@
-"""Moteur d'exécution : orchestre inventaire → plan → copie → vérification.
+"""Execution engine: orchestrates inventory -> plan -> copy -> verification.
 
-Utilisé tel quel par l'UI (dans un thread de travail) et par les tests de bout
-en bout. Deux étapes séparées volontairement :
+Used as-is by the UI (from a worker thread) and by the end-to-end tests. Two
+deliberately separate steps:
 
-1. `prepare()` : inventaire (double énumération) + plan. Rien n'est écrit.
-   Le résultat est présenté à l'utilisateur pour VALIDATION.
-2. `execute(prepared)` : copie + vérification + rapport. Ne démarre jamais
-   sans un `PreparedRun` issu de `prepare()`.
+1. `prepare()`: inventory (double enumeration) + plan. Nothing is written.
+   The result is presented to the user for VALIDATION.
+2. `execute(prepared)`: copy + verification + report. Never starts without a
+   `PreparedRun` produced by `prepare()`.
 
-Toute erreur d'inventaire arrête tout : jamais de copie sur inventaire
-douteux. Une déconnexion en cours de copie interrompt l'exécution en laissant
-un état repris à l'identique au prochain lancement (fichiers .part).
+Any inventory error stops everything: never a copy on a doubtful inventory. A
+disconnection during the copy interrupts the run, leaving a state that resumes
+identically on the next launch (.part files).
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from applesync.core.copier import CopyCancelled, CopyResult, copy_file
+from applesync.core.copier import CopyCancelled, copy_file
 from applesync.core.inventory import Inventory, take_inventory
 from applesync.core.journal import Journal, new_run_id
 from applesync.core.layout import Layout, LayoutLockedError, MirrorLayout
 from applesync.core.manifest import Manifest
 from applesync.core.planner import SyncPlan, build_plan
 from applesync.core.report import RunReport
-from applesync.core.verifier import VerificationReport, verify_against_inventory
+from applesync.core.verifier import verify_against_inventory
 from applesync.device.base import (
     DeviceBackend,
     DeviceDisconnectedError,
@@ -36,21 +36,26 @@ from applesync.device.base import (
     RemoteFile,
 )
 
+# Run outcomes, also used as manifest run statuses.
+COMPLETED = "completed"
+INTERRUPTED = "interrupted"
+FAILED = "failed"
+
 
 @dataclass
 class PreparedRun:
-    """Résultat de la phase 1, à présenter pour validation avant toute copie."""
+    """Phase 1 result, to be shown for validation before any copy."""
 
     inventory: Inventory
     plan: SyncPlan
     device_label: str
     udid: str
-    breakdown_csv: Optional[Path] = None   # ventilation mois × extension
+    breakdown_csv: Optional[Path] = None   # month x extension breakdown
 
 
 @dataclass
 class ProgressSnapshot:
-    """État instantané de la copie, pour l'UI (fichier, compteur, volume, débit, ETA)."""
+    """Live copy state for the UI (file, counter, volume, throughput, ETA)."""
 
     current_file: str = ""
     files_done: int = 0
@@ -85,19 +90,19 @@ class SyncEngine:
         inventory_progress: Optional[Callable[[int, str], None]] = None,
         cancel: Optional[Callable[[], bool]] = None,
     ) -> PreparedRun:
-        """Inventaire vérifié + plan. Lève au moindre doute.
+        """Verified inventory + plan. Raises at the slightest doubt.
 
-        N'écrit rien dans le miroir de sauvegarde ; exporte en revanche la
-        ventilation mois × extension de l'inventaire en CSV dans
-        `.applesync/rapports/` (utile en mode inventaire seul)."""
+        Writes nothing into the backup mirror; it does export the month x
+        extension breakdown of the inventory as CSV under
+        `.applesync/reports/` (useful when only taking an inventory)."""
         if phase_cb:
-            phase_cb("Connexion à l'appareil…")
+            phase_cb("Connecting to the device…")
         session = self.backend.connect(udid)
         try:
             info = session.device_info()
             label = f"{info.name} ({info.model}, iOS {info.ios_version}, {info.udid})"
             if phase_cb:
-                phase_cb("Inventaire (double énumération)…")
+                phase_cb("Inventory (double enumeration)…")
             inventory = take_inventory(
                 session, progress_cb=inventory_progress, cancel=cancel
             )
@@ -105,7 +110,7 @@ class SyncEngine:
             session.close()
 
         if phase_cb:
-            phase_cb("Calcul du plan…")
+            phase_cb("Building the plan…")
         with Manifest(self.dest_root) as manifest:
             locked = manifest.locked_layout()
             if locked is not None and locked != self.layout.id:
@@ -113,12 +118,11 @@ class SyncEngine:
             plan = build_plan(inventory, manifest, self.dest_root, self.layout)
 
         from applesync.core.analyze import write_breakdown_csv
-        from applesync.core.report import RunReport
 
         ts = time.strftime("%Y%m%d-%H%M%S", time.localtime(inventory.taken_at))
         csv_path = write_breakdown_csv(
             inventory,
-            self.dest_root / RunReport.REPORTS_RELPATH / f"inventaire_{ts}.csv",
+            self.dest_root / RunReport.REPORTS_RELPATH / f"inventory_{ts}.csv",
         )
         return PreparedRun(
             inventory=inventory, plan=plan, device_label=label, udid=udid,
@@ -128,12 +132,13 @@ class SyncEngine:
     # ------------------------------------------------------------------ placement
     def _finalize_placement(self, remote, result, manifest, journal, report,
                             ts_map, run_assigned) -> str:
-        """Décide et applique l'emplacement définitif d'un fichier copié.
+        """Decide and apply the final location of a copied file.
 
-        Un seul déplacement atomique couvre : datation définitive (EXIF, si
-        l'organisation le demande) puis rangement des doublons de contenu.
-        Collisions résolues en .~N contre le disque ET les cibles déjà
-        promises dans ce run. Jamais d'écrasement."""
+        A single atomic move covers both the final dating (EXIF, when the
+        layout asks for it) and the filing of content duplicates. Collisions
+        resolve to .~N against both the disk AND the targets already promised
+        in this run. Never an overwrite."""
+        from applesync.core.layout import SHARED_DIRNAME
         from applesync.core.planner import versioned_target
 
         provisional = result.local_relpath
@@ -143,13 +148,11 @@ class SyncEngine:
             final_rel = self._dated_rel(remote, provisional, ts_map)
 
         prior = None
-        from applesync.core.layout import SHARED_DIRNAME
-
-        est_partage = final_rel.startswith(SHARED_DIRNAME + "/")
-        if self.layout.duplicates_dir is not None and not est_partage:
-            # Les albums partagés gardent leur structure par album : un
-            # contenu identique à la photothèque n'y est pas un « doublon »
-            # à ranger, c'est la même photo vue par le partage.
+        is_shared = final_rel.startswith(SHARED_DIRNAME + "/")
+        if self.layout.duplicates_dir is not None and not is_shared:
+            # Shared albums keep their per-album structure: content identical
+            # to the library is not a "duplicate" to file away there, it is
+            # the same photo seen through the share.
             prior = manifest.lookup_by_content(result.sha256, remote.size)
             if prior is not None:
                 final_rel = f"{self.layout.duplicates_dir}/{final_rel}"
@@ -166,31 +169,31 @@ class SyncEngine:
 
         if prior is not None:
             journal.event(
-                "doublon_range",
+                "duplicate_filed",
                 path=remote.path,
-                range_sous=final_rel,
-                identique_a=prior.local_path,
+                filed_under=final_rel,
+                identical_to=prior.local_path,
                 sha256=result.sha256,
             )
             report.duplicates_routed.append(
                 (remote.path, final_rel, prior.local_path)
             )
         elif final_rel != provisional:
-            journal.event("place_definitivement", path=remote.path, cible=final_rel)
+            journal.event("placed", path=remote.path, target=final_rel)
 
         result.local_relpath = final_rel
         return final_rel
 
     def _dated_rel(self, remote: RemoteFile, provisional: str, ts_map: dict) -> str:
-        """Cible datée définitive : EXIF de la photo locale, mtime en repli ;
-        les MOV de Live Photos et les AAE héritent de la date de leur photo."""
+        """Final dated target: EXIF of the local photo, mtime as fallback;
+        Live Photo MOVs and AAE sidecars inherit their photo's date."""
         from applesync.core.exifdate import exif_timestamp
         from applesync.core.layout import PHOTO_EXTENSIONS, _dir_stem, shared_target
 
         path = remote.path
         part = shared_target(path)
         if part is not None:
-            return part          # albums partagés : à part, structure conservée
+            return part          # shared albums: apart, structure preserved
         ext = path.rsplit(".", 1)[-1].upper() if "." in path else ""
         layout = self.layout
 
@@ -216,10 +219,10 @@ class SyncEngine:
         deep_verify: bool = True,
         verify_progress: Optional[Callable[[int, int, str], None]] = None,
     ) -> RunReport:
-        """Copie le plan validé, vérifie la destination, écrit rapport+journal.
+        """Copy the validated plan, verify the destination, write report+journal.
 
-        Retourne un RunReport quel que soit le dénouement (terminé, interrompu,
-        échec) — le statut et l'erreur y figurent. Ne lève que sur bug interne.
+        Returns a RunReport whatever the outcome (completed, interrupted,
+        failed) — status and error are in it. Only raises on an internal bug.
         """
         run_id = new_run_id()
         report = RunReport(run_id=run_id, device_label=prepared.device_label)
@@ -228,17 +231,17 @@ class SyncEngine:
 
         journal = Journal(self.dest_root, run_id)
         manifest = Manifest(self.dest_root)
-        manifest.set_meta("layout", self.layout.id)   # fige l'organisation
+        manifest.set_meta("layout", self.layout.id)   # freeze the layout
         manifest.start_run(run_id, prepared.inventory.device_udid)
         journal.event(
-            "debut_execution",
-            appareil=prepared.device_label,
-            inventaire_fichiers=prepared.inventory.count,
-            inventaire_octets=prepared.inventory.total_bytes,
-            empreinte=prepared.inventory.fingerprint(),
-            a_copier=len(prepared.plan.to_copy),
-            conflits=len(prepared.plan.conflicts),
-            disparus=len(prepared.plan.missing_on_device),
+            "run_started",
+            device=prepared.device_label,
+            inventory_files=prepared.inventory.count,
+            inventory_bytes=prepared.inventory.total_bytes,
+            fingerprint=prepared.inventory.fingerprint(),
+            to_copy=len(prepared.plan.to_copy),
+            conflicts=len(prepared.plan.conflicts),
+            missing_on_device=len(prepared.plan.missing_on_device),
         )
         manifest.update_run(
             run_id,
@@ -248,14 +251,14 @@ class SyncEngine:
 
         transfers = prepared.plan.files_to_transfer
         if self.layout.finalize_dating:
-            # Les .AAE suivent la date de leur photo : ils passent en dernier,
-            # une fois toutes les photos datées (EXIF lu à la copie).
+            # .AAE sidecars follow their photo's date, so they go last, once
+            # every photo has been dated (EXIF read at copy time).
             transfers = sorted(
                 transfers,
                 key=lambda t: (t[0].path.upper().endswith(".AAE"), t[0].path),
             )
-        ts_map: dict[tuple[str, str], int] = {}   # (dossier, nom) → date retenue
-        run_assigned: set[str] = set()            # cibles finales promises ce run
+        ts_map: dict[tuple[str, str], int] = {}   # (folder, stem) -> chosen date
+        run_assigned: set[str] = set()            # final targets promised this run
         snap = ProgressSnapshot(
             files_total=len(transfers),
             bytes_total=sum(f.size for f, _ in transfers),
@@ -264,17 +267,19 @@ class SyncEngine:
         window_bytes = 0
 
         session = None
-        status = "terminé"
+        status = COMPLETED
         try:
-            # --- adoption : fichiers déjà sur disque, jamais re-copiés -------
+            # --- adoption: files already on disk, never copied again --------
             if prepared.plan.to_adopt:
                 if phase_cb:
-                    phase_cb(f"Adoption de {len(prepared.plan.to_adopt)} fichiers déjà présents…")
+                    phase_cb(
+                        f"Adopting {len(prepared.plan.to_adopt)} files already present…"
+                    )
                 from applesync.core.verifier import _sha256_of
 
                 for adopt_i, f in enumerate(prepared.plan.to_adopt, 1):
                     if cancel and cancel():
-                        raise CopyCancelled("adoption interrompue")
+                        raise CopyCancelled("adoption interrupted")
                     rel = prepared.plan.targets[f.path]
                     if verify_progress:
                         verify_progress(adopt_i, len(prepared.plan.to_adopt), rel)
@@ -282,15 +287,15 @@ class SyncEngine:
                     manifest.record_file(
                         f, sha, rel, run_id, prepared.inventory.device_udid
                     )
-                    journal.event("fichier_adopte", path=f.path, sha256=sha)
+                    journal.event("file_adopted", path=f.path, sha256=sha)
 
-            # --- copie -------------------------------------------------------
+            # --- copy --------------------------------------------------------
             if transfers:
                 if phase_cb:
-                    phase_cb("Connexion pour la copie…")
+                    phase_cb("Connecting for the copy…")
                 session = self.backend.connect(prepared.udid)
                 if phase_cb:
-                    phase_cb("Copie…")
+                    phase_cb("Copying…")
 
             for remote, target_rel in transfers:
                 snap.current_file = remote.path
@@ -316,11 +321,11 @@ class SyncEngine:
                         progress(current)
 
                 if self.layout.finalize_dating:
-                    # Fichier de transit orphelin (interruption entre copie et
-                    # placement) : jamais enregistré au manifeste → on repart.
+                    # Orphan staging file (interruption between copy and
+                    # placement): never recorded in the manifest, so start over.
                     stale = self.dest_root / target_rel
                     if stale.exists():
-                        journal.event("transit_orphelin_purge", cible=target_rel)
+                        journal.event("orphan_staging_purged", target=target_rel)
                         stale.unlink()
 
                 try:
@@ -334,21 +339,20 @@ class SyncEngine:
                         progress_cb=file_progress,
                     )
                 except DeviceDisconnectedError as e:
-                    journal.event("deconnexion", path=remote.path, erreur=str(e))
-                    report.failures.append((remote.path, f"déconnexion : {e}"))
-                    status = "interrompu"
+                    journal.event("disconnected", path=remote.path, error=str(e))
+                    report.failures.append((remote.path, f"disconnected: {e}"))
+                    status = INTERRUPTED
                     report.error = (
-                        f"Session coupée pendant {remote.path} (écran verrouillé ou "
-                        f"câble débranché). Les fichiers déjà copiés sont acquis ; "
-                        f"le fichier en cours reprendra à l'octet près au prochain "
-                        f"lancement."
+                        f"Session dropped during {remote.path} (screen locked or "
+                        f"cable unplugged). Files already copied are safe; the "
+                        f"current file will resume byte-exactly on the next run."
                     )
                     break
                 except DeviceError as e:
-                    journal.event("echec_fichier", path=remote.path, erreur=str(e))
+                    journal.event("file_failed", path=remote.path, error=str(e))
                     report.failures.append((remote.path, str(e)))
-                    # Erreur limitée à un fichier : on continue, elle restera
-                    # visible au rapport et la vérification la re-signalera.
+                    # Error limited to one file: carry on. It stays visible in
+                    # the report and verification will flag it again.
                     continue
 
                 final_rel = self._finalize_placement(
@@ -368,12 +372,12 @@ class SyncEngine:
                     progress(snap)
 
         except CopyCancelled:
-            status = "interrompu"
+            status = INTERRUPTED
             report.error = (
-                "Interruption demandée. Les fichiers déjà copiés sont acquis ; "
-                "le fichier en cours reprendra à l'octet près."
+                "Interruption requested. Files already copied are safe; the "
+                "current file will resume byte-exactly."
             )
-            journal.event("interruption_utilisateur")
+            journal.event("user_interrupted")
         finally:
             if session is not None:
                 try:
@@ -381,18 +385,18 @@ class SyncEngine:
                 except Exception:
                     pass
 
-        # --- vérification --------------------------------------------------
-        # On vérifie ce qui est censé être sur disque : tout l'inventaire si
-        # l'exécution est allée au bout, sinon uniquement ce qui a été copié
-        # ou adopté cette fois (les .part ne comptent jamais comme copiés).
+        # --- verification ----------------------------------------------------
+        # Verify what is supposed to be on disk: the whole inventory if the run
+        # went to the end, otherwise only what was copied or adopted this time
+        # (.part files never count as copied).
         try:
-            if status == "terminé":
+            if status == COMPLETED:
                 if phase_cb:
-                    phase_cb("Vérification complète de la destination…")
+                    phase_cb("Full verification of the destination…")
                 to_check: list[RemoteFile] = list(prepared.inventory.files)
             else:
                 if phase_cb:
-                    phase_cb("Vérification des fichiers copiés avant interruption…")
+                    phase_cb("Verifying the files copied before the interruption…")
                 copied_paths = {c.remote.path for c in report.copies}
                 adopted = {f.path for f in prepared.plan.to_adopt}
                 to_check = [
@@ -405,49 +409,49 @@ class SyncEngine:
                 self.dest_root,
                 deep_hash=deep_verify,
                 progress_cb=verify_progress,
-                cancel=None,   # la vérification d'un run ne s'interrompt pas
+                cancel=None,   # a run's verification is not interruptible
             )
             journal.event(
                 "verification",
-                controles=report.verification.checked_count,
-                haches=report.verification.hashed_count,
-                conformes=report.verification.ok_count,
-                ecarts=[
-                    {"source": d.source_path, "type": d.kind, "detail": d.detail}
+                checked=report.verification.checked_count,
+                hashed=report.verification.hashed_count,
+                conforming=report.verification.ok_count,
+                discrepancies=[
+                    {"source": d.source_path, "kind": d.kind, "detail": d.detail}
                     for d in report.verification.discrepancies
                 ],
             )
-            if status == "terminé" and not report.verification.ok:
-                status = "échec"
+            if status == COMPLETED and not report.verification.ok:
+                status = FAILED
                 report.error = (
-                    f"Vérification en écart sur "
-                    f"{len(report.verification.discrepancies)} fichier(s) — "
-                    f"voir la liste nominative. NE PAS supprimer les originaux."
+                    f"Verification found discrepancies on "
+                    f"{len(report.verification.discrepancies)} file(s) — see the "
+                    f"list by name. DO NOT delete the originals."
                 )
-            if status == "terminé" and report.failures:
-                status = "échec"
+            if status == COMPLETED and report.failures:
+                status = FAILED
                 report.error = (
-                    f"{len(report.failures)} fichier(s) en échec de copie — "
-                    f"voir la liste. NE PAS supprimer les originaux."
+                    f"{len(report.failures)} file(s) failed to copy — see the "
+                    f"list. DO NOT delete the originals."
                 )
-        except Exception as e:  # la vérification ne doit jamais passer sous silence
-            status = "échec"
-            report.error = f"Vérification impossible : {e}"
-            journal.event("verification_impossible", erreur=str(e))
+        except Exception as e:  # verification must never pass in silence
+            status = FAILED
+            report.error = f"Verification impossible: {e}"
+            journal.event("verification_impossible", error=str(e))
 
         report.status = status
         report.finished_at = time.time()
         journal.event(
-            "fin_execution",
-            statut=status,
+            "run_finished",
+            status=status,
             copies=len(report.copies),
-            echecs=len(report.failures),
+            failures=len(report.failures),
         )
         report_path = report.save(self.dest_root)
         manifest.update_run(
             run_id,
             finished_at=report.finished_at,
-            status={"terminé": "completed", "interrompu": "interrupted", "échec": "failed"}[status],
+            status=status,
             copied_count=len(report.copies),
             copied_bytes=sum(c.remote.size for c in report.copies),
             report_path=str(report_path),

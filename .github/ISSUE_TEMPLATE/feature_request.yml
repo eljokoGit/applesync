@@ -1,45 +1,43 @@
-name: Proposition d'amélioration
-description: Suggérer une fonctionnalité ou une évolution
+name: Feature request
+description: Suggest a feature or an improvement
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Avant de proposer, gardez en tête les règles intangibles du projet
-        (voir CONTRIBUTING.md) : **aucune écriture vers l'iPhone**, aucune
-        suppression ni écrasement dans la destination, et échec bruyant
-        plutôt que succès douteux. Une proposition qui les contredirait ne
-        pourra pas être retenue.
+        Before suggesting, keep the project's non-negotiable rules in mind
+        (see CONTRIBUTING.md): **no write towards the device**, no deletion or
+        overwrite in the destination, and loud failure over doubtful success.
+        A proposal contradicting them cannot be accepted.
 
   - type: textarea
-    id: besoin
+    id: need
     attributes:
-      label: Le besoin
+      label: The need
       description: >
-        Quel problème concret cherchez-vous à résoudre ? Décrivez la
-        situation plutôt que la solution.
+        Which concrete problem are you trying to solve? Describe the situation
+        rather than the solution.
     validations:
       required: true
 
   - type: textarea
-    id: proposition
+    id: proposal
     attributes:
-      label: La solution envisagée
+      label: The solution you have in mind
     validations:
       required: true
 
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives envisagées
-      description: Contournements actuels, autres approches écartées et pourquoi.
+      label: Alternatives considered
+      description: Current workarounds, other approaches you ruled out and why.
 
   - type: checkboxes
-    id: compatibilite
+    id: compatibility
     attributes:
-      label: Compatibilité avec les règles du projet
+      label: Compatibility with the project rules
       options:
         - label: >
-            Ma proposition n'implique aucune écriture ni suppression sur
-            l'iPhone.
+            My proposal involves no write and no deletion on the device.
           required: true

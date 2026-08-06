@@ -1,1 +1,1 @@
-"""Interface de bureau PySide6. Lisibilité de l'état avant esthétique."""
+"""PySide6 desktop interface. Legibility of state before aesthetics."""

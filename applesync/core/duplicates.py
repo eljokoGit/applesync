@@ -1,15 +1,15 @@
-"""Détection de doublons par CONTENU (SHA-256), pas par nom.
+"""Duplicate detection by CONTENT (SHA-256), not by name.
 
-Le manifeste stocke le SHA-256 de chaque fichier copié ou adopté : deux
-entrées de même hachage (et même taille, double contrôle) sont des doublons
-de contenu, quel que soit leur nom ou leur dossier.
+The manifest stores the SHA-256 of every copied or adopted file: two entries
+with the same hash (and the same size, as a double check) are content
+duplicates, whatever their name or folder.
 
-Sortie : un rapport nominatif par groupes — l'application ne supprime JAMAIS
-rien d'elle-même, ni sur l'iPhone (impossible par construction) ni dans la
-destination. Le ménage éventuel appartient à l'utilisateur, la liste en main.
+Output: a report listing every group by name — the application NEVER deletes
+anything by itself, neither on the device (impossible by construction) nor in
+the destination. Any cleanup belongs to the user, list in hand.
 
-Disponible seulement après synchronisation (les hachages naissent à la
-copie) ; aucun iPhone requis.
+Only meaningful after a synchronisation (hashes appear at copy time); no
+device required.
 """
 
 from __future__ import annotations
@@ -25,11 +25,11 @@ from applesync.core.manifest import Manifest, ManifestEntry
 class DuplicateGroup:
     sha256: str
     size: int
-    entries: tuple[ManifestEntry, ...]     # ≥ 2, triées par date de synchro
+    entries: tuple[ManifestEntry, ...]     # >= 2, sorted by sync date
 
     @property
     def wasted_bytes(self) -> int:
-        """Octets récupérables si on ne gardait qu'un exemplaire."""
+        """Bytes reclaimable if only one copy were kept."""
         return self.size * (len(self.entries) - 1)
 
 
@@ -49,38 +49,38 @@ class DuplicateReport:
     def to_markdown(self) -> str:
         from applesync.core.report import fmt_bytes
 
-        lines = ["# Doublons de contenu (SHA-256 identiques)", ""]
-        lines.append(f"- Fichiers examinés (au manifeste) : {self.scanned_count}")
+        lines = ["# Content duplicates (identical SHA-256)", ""]
+        lines.append(f"- Files examined (in the manifest): {self.scanned_count}")
         if not self.groups:
-            lines.append("- **Aucun doublon de contenu.**")
+            lines.append("- **No content duplicate.**")
             return "\n".join(lines)
-        lines.append(f"- Groupes de doublons : {len(self.groups)}")
+        lines.append(f"- Duplicate groups: {len(self.groups)}")
         lines.append(
-            f"- Exemplaires excédentaires : {self.duplicate_count} "
-            f"({fmt_bytes(self.wasted_bytes)} récupérables)"
+            f"- Surplus copies: {self.duplicate_count} "
+            f"({fmt_bytes(self.wasted_bytes)} reclaimable)"
         )
         lines.append("")
         lines.append(
-            "L'application ne supprime rien : liste fournie pour décision "
-            "manuelle. Chemins relatifs à la destination."
+            "The application deletes nothing: this list is for you to decide. "
+            "Paths are relative to the destination."
         )
         lines.append("")
         for g in self.groups:
             lines.append(
-                f"## {fmt_bytes(g.size)} × {len(g.entries)} — `{g.sha256[:16]}…`"
+                f"## {fmt_bytes(g.size)} x {len(g.entries)} — `{g.sha256[:16]}…`"
             )
             for e in g.entries:
-                quand = time.strftime("%Y-%m-%d", time.localtime(e.synced_at))
+                when = time.strftime("%Y-%m-%d", time.localtime(e.synced_at))
                 lines.append(
-                    f"- `{e.local_path}` (source iPhone : `{e.source_path}`, "
-                    f"synchronisé le {quand})"
+                    f"- `{e.local_path}` (device source: `{e.source_path}`, "
+                    f"synchronised on {when})"
                 )
             lines.append("")
         return "\n".join(lines)
 
 
 def find_duplicates(manifest: Manifest) -> DuplicateReport:
-    """Groupes d'entrées du manifeste partageant (sha256, taille)."""
+    """Groups of manifest entries sharing (sha256, size)."""
     by_hash: dict[tuple[str, int], list[ManifestEntry]] = defaultdict(list)
     entries = manifest.all_entries()
     for e in entries:

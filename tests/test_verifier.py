@@ -1,4 +1,4 @@
-"""Vérification : chaque altération de la destination est nommée."""
+"""Verification: every alteration of the destination is named."""
 
 from applesync.core.copier import copy_file
 from applesync.core.inventory import take_inventory
@@ -19,7 +19,7 @@ def _sync_everything(backend, dest):
     return inv, m
 
 
-def test_tout_conforme(backend, dest):
+def test_everything_conforms(backend, dest):
     inv, m = _sync_everything(backend, dest)
     rep = verify_against_inventory(inv.files, m, dest, deep_hash=True)
     assert rep.ok
@@ -28,53 +28,53 @@ def test_tout_conforme(backend, dest):
     m.close()
 
 
-def test_fichier_supprime_du_disque_nomme(backend, dest):
+def test_file_deleted_from_disk_is_named(backend, dest):
     inv, m = _sync_everything(backend, dest)
-    victime = inv.files[3]
-    (dest / victime.path).unlink()
+    victim = inv.files[3]
+    (dest / victim.path).unlink()
     rep = verify_against_inventory(inv.files, m, dest, deep_hash=True)
     assert not rep.ok
-    assert [d.source_path for d in rep.discrepancies] == [victime.path]
-    assert rep.discrepancies[0].kind == "fichier_manquant"
+    assert [d.source_path for d in rep.discrepancies] == [victim.path]
+    assert rep.discrepancies[0].kind == "file_missing"
     m.close()
 
 
-def test_fichier_tronque_nomme(backend, dest):
+def test_truncated_file_is_named(backend, dest):
     inv, m = _sync_everything(backend, dest)
-    victime = inv.files[8]
-    p = dest / victime.path
+    victim = inv.files[8]
+    p = dest / victim.path
     p.write_bytes(p.read_bytes()[:-10])
     rep = verify_against_inventory(inv.files, m, dest, deep_hash=False)
-    assert [d.source_path for d in rep.discrepancies] == [victime.path]
-    assert rep.discrepancies[0].kind == "taille"
+    assert [d.source_path for d in rep.discrepancies] == [victim.path]
+    assert rep.discrepancies[0].kind == "size"
     m.close()
 
 
-def test_corruption_meme_taille_detectee_par_hachage(backend, dest):
-    """Corruption d'un octet sans changement de taille : seul le mode
-    approfondi la voit — c'est sa raison d'être."""
+def test_same_size_corruption_is_caught_by_hashing(backend, dest):
+    """One byte flipped without changing the size: only the deep mode sees it
+    — that is its whole purpose."""
     inv, m = _sync_everything(backend, dest)
-    victime = inv.files[10]
-    p = dest / victime.path
+    victim = inv.files[10]
+    p = dest / victim.path
     data = bytearray(p.read_bytes())
     data[len(data) // 2] ^= 0xFF
     p.write_bytes(bytes(data))
 
-    rapide = verify_against_inventory(inv.files, m, dest, deep_hash=False)
-    assert rapide.ok  # la taille ne bouge pas : le contrôle rapide ne voit rien
+    quick = verify_against_inventory(inv.files, m, dest, deep_hash=False)
+    assert quick.ok  # the size did not move: the quick check sees nothing
 
-    profond = verify_against_inventory(inv.files, m, dest, deep_hash=True)
-    assert [d.source_path for d in profond.discrepancies] == [victime.path]
-    assert profond.discrepancies[0].kind == "sha256"
+    deep = verify_against_inventory(inv.files, m, dest, deep_hash=True)
+    assert [d.source_path for d in deep.discrepancies] == [victim.path]
+    assert deep.discrepancies[0].kind == "sha256"
     m.close()
 
 
-def test_fichier_jamais_copie_absent_du_manifeste(backend, dest):
+def test_never_copied_file_is_absent_from_the_manifest(backend, dest):
     inv, m = _sync_everything(backend, dest)
-    nouveau = backend.add_file("202312_a/IMG_88888.HEIC", 5000, 1_700_000_000)
+    added = backend.add_file("202312_a/IMG_88888.HEIC", 5000, 1_700_000_000)
     with backend.connect(backend.INFO.udid) as s:
         inv2 = take_inventory(s)
     rep = verify_against_inventory(inv2.files, m, dest, deep_hash=False)
-    assert [d.source_path for d in rep.discrepancies] == [nouveau.path]
-    assert rep.discrepancies[0].kind == "absent_du_manifeste"
+    assert [d.source_path for d in rep.discrepancies] == [added.path]
+    assert rep.discrepancies[0].kind == "not_in_manifest"
     m.close()

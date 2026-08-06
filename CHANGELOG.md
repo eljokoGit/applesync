@@ -1,48 +1,44 @@
-# Journal des versions
+# Changelog
 
-Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
-Ce projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
+Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+This project follows [semantic versioning](https://semver.org/).
 
-## [Non publié]
+## [Unreleased]
 
-## [1.0.0] — 2026-08-05
+## [1.0.0] — 2026-08-06
 
-Première version publique.
+First public release.
 
-### Ajouté
+### Added
 
-- Inventaire à double énumération : le contenu de l'appareil est parcouru
-  deux fois et les passes comparées ; toute divergence interrompt le
-  traitement avec la liste nominative des écarts.
-- Couverture complète de la bibliothèque : `/DCIM`, zone iCloud
-  (`PhotoData/CPLAssets`) et albums partagés
-  (`PhotoData/PhotoCloudSharingData`, rangés dans `_AlbumsPartages/`).
-- Copie incrémentale et idempotente, identité fondée sur
-  (chemin, taille, date de modification).
-- Reprise à l'octet près après verrouillage de l'écran ou débranchement ;
-  aucun fichier partiel ne peut porter un nom définitif.
-- Vérification par relecture intégrale du disque et comparaison SHA-256,
-  avec liste nominative des écarts.
-- Trois organisations de destination, figées par destination : miroir,
-  par date, archive (renommage horodaté d'après l'EXIF, `_LivePhotos/`,
-  `_Doublons/`).
-- Récupération des albums et favoris depuis la base Photos de l'appareil,
-  avec analyse défensive du schéma.
-- Détection des doublons par contenu (rapport, aucune suppression).
-- Test de stabilité : trois inventaires successifs comparés.
-- Journal JSONL et rapport Markdown par exécution, ventilation CSV
-  mois × extension par inventaire.
-- Simulateur d'appareil déterministe avec injection de pannes
-  (troncature silencieuse, déconnexion, lecture interrompue, verrouillage) —
-  110 tests exécutables sans matériel.
-- Vérification de mise à jour au démarrage, en consultation seule et
-  désactivable.
+- Inventory with double enumeration: the device content is walked twice and
+  the passes compared; any divergence stops everything and names the files
+  that differ.
+- Full coverage of the photo library: `/DCIM`, plus the iCloud zone
+  (`PhotoData/CPLAssets`) and shared albums
+  (`PhotoData/PhotoCloudSharingData`, filed under `_SharedAlbums/`).
+- Incremental, idempotent copy; identity based on (path, size, mtime).
+- Byte-exact resume after a screen lock or an unplug; no partial file can ever
+  carry a final name.
+- Verification by full disk re-read and SHA-256 comparison, with every
+  discrepancy listed by name.
+- Three destination layouts, frozen per destination: mirror, by date, archive
+  (timestamp renaming from EXIF, `_LivePhotos/`, `_Duplicates/`).
+- Album and favourite recovery from the device's Photos database, with
+  defensive schema parsing.
+- Content-based duplicate detection (report only, nothing deleted).
+- Stability check: three successive inventories compared.
+- JSONL journal and Markdown report per run, month x extension CSV breakdown
+  per inventory.
+- Deterministic device simulator with fault injection (silent truncation,
+  disconnection, interrupted read, locked device) — 110 tests runnable
+  without hardware.
+- Update check at start-up, read-only and disableable.
 
-### Sécurité
+### Security
 
-- Aucune opération d'écriture vers l'appareil n'existe dans le code : la
-  suppression ou la modification de données sur l'iPhone est impossible par
-  construction, pas par choix d'exécution.
+- No write operation towards the device exists in the code: deleting or
+  modifying data on the device is impossible by construction, not by policy.
 
-[Non publié]: https://github.com/eljokoGit/applesync/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/eljokoGit/applesync/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/eljokoGit/applesync/releases/tag/v1.0.0

@@ -1,14 +1,15 @@
-"""Parcours UI automatisé (offscreen) avec captures d'écran.
+"""Automated UI walkthrough (offscreen) with screenshots.
 
-Usage :
-    python scripts/ui_smoke.py <dossier_sortie> [--real]
+Usage:
+    python scripts/ui_smoke.py <output_dir> [--real]
 
---real  : backend AFC réel (sans iPhone : doit afficher « Aucun iPhone détecté »)
-sinon   : simulateur, parcours complet inventaire → synchro → rapport,
-          puis re-inventaire (delta vide) et test de stabilité.
+--real  : the real AFC backend (without a device it must show "No device
+          detected")
+otherwise: the simulator, full walkthrough inventory -> sync -> report, then a
+          second inventory (empty delta) and the stability check.
 
-Chaque étape attend l'état visé avec un délai maximal : pas de « sleep et
-on espère » — si l'état n'arrive pas, le script échoue bruyamment.
+Every step waits for its target state with a deadline: no "sleep and hope" —
+if the state never arrives, the script fails loudly.
 """
 
 from __future__ import annotations
@@ -19,8 +20,8 @@ import tempfile
 import time
 from pathlib import Path
 
-# Par défaut : rendu offscreen. SMOKE_PLATFORM=windows donne des captures avec
-# les vraies fontes, sans jamais afficher la fenêtre (grab hors écran).
+# Offscreen rendering by default. SMOKE_PLATFORM=windows produces screenshots
+# with the real fonts, without ever showing the window (offscreen grab).
 os.environ.setdefault(
     "QT_QPA_PLATFORM", os.environ.get("SMOKE_PLATFORM", "offscreen")
 )
@@ -48,13 +49,13 @@ def wait_until(app: QApplication, predicate, timeout: float, label: str) -> None
         if predicate():
             return
         time.sleep(0.02)
-    raise SystemExit(f"ÉCHEC ui_smoke : condition non atteinte ({label})")
+    raise SystemExit(f"ui_smoke FAILED: condition never met ({label})")
 
 
 def shot(win: MainWindow, out_dir: Path, name: str) -> None:
     path = out_dir / f"{name}.png"
     win.grab().save(str(path))
-    print(f"  capture : {path.name}")
+    print(f"  screenshot: {path.name}")
 
 
 def main() -> None:
@@ -74,17 +75,17 @@ def main() -> None:
         win = MainWindow(backend, simulate=False, config=config)
         if SHOW_WINDOW:
             win.show()
-        # Le watcher doit constater l'absence d'appareil.
+        # The watcher must report the absence of a device.
         wait_until(
             app,
-            lambda: "Aucun iPhone" in win.state_label.text(),
+            lambda: "No device" in win.state_label.text(),
             timeout=15,
-            label="bannière « Aucun iPhone détecté »",
+            label='"No device detected" banner',
         )
         pump(app, 0.5)
-        shot(win, out_dir, "reel_01_aucun_appareil")
-        assert not win.btn_inventory.isEnabled(), "Inventorier devrait être désactivé"
-        print("OK (réel) : aucun appareil détecté, boutons désactivés.")
+        shot(win, out_dir, "real_01_no_device")
+        assert not win.btn_inventory.isEnabled(), "Inventory should be disabled"
+        print("OK (real): no device detected, buttons disabled.")
         win.close()
         pump(app, 0.5)
         return
@@ -99,71 +100,73 @@ def main() -> None:
     if SHOW_WINDOW:
         win.show()
 
-    print("étape 1 : appareil simulé prêt")
+    print("step 1: simulated device ready")
     wait_until(
         app,
-        lambda: "prêt" in win.state_label.text(),
+        lambda: "ready" in win.state_label.text().lower(),
         timeout=15,
-        label="bannière « iPhone prêt »",
+        label='"Device ready" banner',
     )
-    shot(win, out_dir, "sim_01_pret")
+    shot(win, out_dir, "sim_01_ready")
 
-    print("étape 2 : inventaire + plan")
+    print("step 2: inventory + plan")
     win._start_prepare()
     wait_until(
         app,
-        lambda: win.ui_state == UiState.PLAN_PRET,
+        lambda: win.ui_state == UiState.PLAN_READY,
         timeout=120,
-        label="plan prêt",
+        label="plan ready",
     )
     shot(win, out_dir, "sim_02_plan")
     assert win.prepared is not None
     n_total = win.prepared.inventory.count
-    assert len(win.prepared.plan.to_copy) == n_total, "premier run : tout à copier"
+    assert len(win.prepared.plan.to_copy) == n_total, "first run: everything to copy"
 
-    print(f"étape 3 : synchronisation de {n_total} fichiers")
+    print(f"step 3: synchronising {n_total} files")
     win._start_execute()
     wait_until(
         app,
-        lambda: win.ui_state == UiState.REPOS,
+        lambda: win.ui_state == UiState.IDLE,
         timeout=600,
-        label="fin de synchro",
+        label="end of sync",
     )
-    shot(win, out_dir, "sim_03_rapport")
-    assert "terminée et vérifiée" in win.lbl_phase.text(), win.lbl_phase.text()
+    shot(win, out_dir, "sim_03_report")
+    assert "completed and verified" in win.lbl_phase.text(), win.lbl_phase.text()
 
-    copied = sum(1 for _ in dest.rglob("*") if _.is_file() and _.suffix in (".HEIC", ".MOV"))
-    assert copied == n_total, f"{copied} fichiers sur disque, {n_total} attendus"
+    copied = sum(
+        1 for p in dest.rglob("*") if p.is_file() and p.suffix in (".HEIC", ".MOV")
+    )
+    assert copied == n_total, f"{copied} files on disk, {n_total} expected"
     parts = list(dest.rglob("*.part"))
-    assert not parts, f"fichiers partiels résiduels : {parts}"
+    assert not parts, f"leftover partial files: {parts}"
 
-    print("étape 4 : re-inventaire (delta vide, idempotence)")
+    print("step 4: second inventory (empty delta, idempotence)")
     win._start_prepare()
     wait_until(
         app,
-        lambda: win.ui_state == UiState.PLAN_PRET,
+        lambda: win.ui_state == UiState.PLAN_READY,
         timeout=120,
         label="second plan",
     )
     assert win.prepared is not None and not win.prepared.plan.to_copy
-    shot(win, out_dir, "sim_04_delta_vide")
+    shot(win, out_dir, "sim_04_empty_delta")
 
-    print("étape 5 : test de stabilité 3×")
+    print("step 5: stability check 3x")
     win._start_stability()
     wait_until(
         app,
-        lambda: "stabilité" in win.lbl_phase.text().lower()
-        and win.ui_state == UiState.REPOS,
+        lambda: "stability" in win.lbl_phase.text().lower()
+        and win.ui_state == UiState.IDLE,
         timeout=300,
-        label="fin test stabilité",
+        label="end of stability check",
     )
-    shot(win, out_dir, "sim_05_stabilite")
+    shot(win, out_dir, "sim_05_stability")
     assert "STABLE" in win.lbl_phase.text(), win.lbl_phase.text()
 
     win.close()
     pump(app, 0.5)
-    print("OK (simulation) : parcours complet réussi.")
-    print(f"destination de démonstration : {dest}")
+    print("OK (simulation): full walkthrough succeeded.")
+    print(f"demo destination: {dest}")
 
 
 if __name__ == "__main__":

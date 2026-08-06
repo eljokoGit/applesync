@@ -1,41 +1,40 @@
-# Code de conduite
+# Code of Conduct
 
-## Notre engagement
+## Our pledge
 
-Nous nous engageons à faire de la participation à ce projet une expérience
-exempte de harcèlement pour tout le monde, quels que soient l'âge, la
-morphologie, le handicap, l'origine ethnique, l'identité et l'expression de
-genre, le niveau d'expérience, la nationalité, l'apparence, la religion ou
-l'orientation sexuelle.
+We are committed to making participation in this project a harassment-free
+experience for everyone, regardless of age, body size, disability, ethnicity,
+gender identity and expression, level of experience, nationality, personal
+appearance, religion or sexual identity and orientation.
 
-## Nos règles
+## Our standards
 
-Comportements attendus :
+Expected behaviour:
 
-- faire preuve d'empathie et de bienveillance ;
-- respecter les opinions et les expériences différentes des siennes ;
-- accepter les critiques constructives et en tenir compte ;
-- se concentrer sur ce qui est le mieux pour le projet et ses utilisateurs.
+- showing empathy and kindness toward other people;
+- respecting differing opinions, viewpoints and experiences;
+- accepting constructive criticism gracefully;
+- focusing on what is best for the project and its users.
 
-Comportements inacceptables :
+Unacceptable behaviour:
 
-- propos ou images à caractère sexuel, avances importunes ;
-- trollage, insultes, attaques personnelles ou politiques ;
-- harcèlement public ou privé ;
-- publication d'informations privées d'autrui sans autorisation explicite.
+- sexualised language or imagery, unwelcome advances;
+- trolling, insulting remarks, personal or political attacks;
+- public or private harassment;
+- publishing others' private information without explicit permission.
 
-## Application
+## Enforcement
 
-Les mainteneurs sont chargés de clarifier ces règles et prendront les
-mesures appropriées et équitables en réponse à tout comportement jugé
-inapproprié : avertissement, suppression de contributions, blocage
-temporaire ou définitif.
+Maintainers are responsible for clarifying these standards and will take
+appropriate and fair corrective action in response to any behaviour they deem
+inappropriate: a warning, removal of contributions, or a temporary or
+permanent ban.
 
-Les abus peuvent être signalés aux mainteneurs via l'onglet Security du
-dépôt ou par un message privé. Toute plainte sera examinée et donnera lieu à
-une réponse ; la confidentialité du signalement est respectée.
+Abuse may be reported to the maintainers through the repository's Security tab
+or by private message. All complaints will be reviewed and answered; the
+privacy of the reporter is respected.
 
 ## Attribution
 
-Adapté du [Contributor Covenant](https://www.contributor-covenant.org),
+Adapted from the [Contributor Covenant](https://www.contributor-covenant.org),
 version 2.1.

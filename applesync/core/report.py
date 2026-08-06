@@ -1,7 +1,7 @@
-"""Rapport final d'exécution, lisible et nominatif.
+"""Final run report, readable and naming every exception.
 
-Un rapport par exécution, en Markdown, écrit dans `.applesync/rapports/`.
-Les écarts et incidents sont listés PAR NOM — jamais un pourcentage seul.
+One report per run, in Markdown, written to `.applesync/reports/`.
+Discrepancies and incidents are listed BY NAME — never a bare percentage.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from applesync.core.verifier import VerificationReport
 
 
 def fmt_bytes(n: int) -> str:
-    """Format lisible (unités binaires) — partagé avec l'UI."""
+    """Human-readable size (binary units) — shared with the UI."""
     return _fmt_bytes(n)
 
 
@@ -27,11 +27,11 @@ def fmt_duration(s: float) -> str:
 
 
 def _fmt_bytes(n: int) -> str:
-    for unit in ("o", "Kio", "Mio", "Gio", "Tio"):
-        if n < 1024 or unit == "Tio":
-            return f"{n:.1f} {unit}" if unit != "o" else f"{n} o"
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024 or unit == "TiB":
+            return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
         n /= 1024
-    return f"{n} o"
+    return f"{n} B"
 
 
 def _fmt_duration(s: float) -> str:
@@ -44,95 +44,95 @@ def _fmt_duration(s: float) -> str:
 class RunReport:
     run_id: str
     device_label: str
-    status: str = "en cours"          # terminé | interrompu | échec
+    status: str = "running"           # completed | interrupted | failed
     inventory: Optional[Inventory] = None
     plan: Optional[SyncPlan] = None
     copies: list[CopyResult] = field(default_factory=list)
-    failures: list[tuple[str, str]] = field(default_factory=list)   # (path, erreur)
-    # (source iPhone, rangé sous, identique à) — organisation « archive »
+    failures: list[tuple[str, str]] = field(default_factory=list)   # (path, error)
+    # (device source, filed under, identical to) — "archive" layout
     duplicates_routed: list[tuple[str, str, str]] = field(default_factory=list)
     verification: Optional[VerificationReport] = None
     error: Optional[str] = None
     started_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
 
-    REPORTS_RELPATH = Path(".applesync") / "rapports"
+    REPORTS_RELPATH = Path(".applesync") / "reports"
 
     def to_markdown(self) -> str:
         lines: list[str] = []
         add = lines.append
-        add(f"# Rapport de synchronisation — {self.run_id}")
+        add(f"# Synchronisation report — {self.run_id}")
         add("")
-        add(f"- **Appareil** : {self.device_label}")
-        add(f"- **Début** : {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.started_at))}")
+        add(f"- **Device**: {self.device_label}")
+        add(f"- **Started**: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.started_at))}")
         if self.finished_at:
-            add(f"- **Fin** : {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.finished_at))}"
-                f" (durée {_fmt_duration(self.finished_at - self.started_at)})")
-        add(f"- **Statut** : **{self.status.upper()}**")
+            add(f"- **Finished**: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.finished_at))}"
+                f" (duration {_fmt_duration(self.finished_at - self.started_at)})")
+        add(f"- **Status**: **{self.status.upper()}**")
         if self.error:
-            add(f"- **Erreur** : {self.error}")
+            add(f"- **Error**: {self.error}")
         add("")
 
         if self.inventory is not None:
             inv = self.inventory
-            add("## Inventaire source")
+            add("## Source inventory")
             add("")
-            add(f"- {inv.count} fichiers, {_fmt_bytes(inv.total_bytes)}")
-            add(f"- Double énumération : {'oui — concordante' if inv.double_checked else 'NON'}")
-            add(f"- Empreinte : `{inv.fingerprint()}`")
-            add(f"- Durée : {_fmt_duration(inv.duration_s)}")
+            add(f"- {inv.count} files, {_fmt_bytes(inv.total_bytes)}")
+            add(f"- Double enumeration: {'yes — matching' if inv.double_checked else 'NO'}")
+            add(f"- Fingerprint: `{inv.fingerprint()}`")
+            add(f"- Duration: {_fmt_duration(inv.duration_s)}")
             add("")
 
         if self.plan is not None:
             p = self.plan
             add("## Plan")
             add("")
-            add(f"- À copier : {len(p.to_copy)} ({_fmt_bytes(sum(f.size for f in p.to_copy))})")
-            add(f"- Déjà synchronisés : {len(p.already_synced)}")
-            add(f"- Adoptés (déjà sur disque, ré-enregistrés) : {len(p.to_adopt)}")
-            add(f"- Conflits (copiés sous nom versionné) : {len(p.conflicts)}")
+            add(f"- To copy: {len(p.to_copy)} ({_fmt_bytes(sum(f.size for f in p.to_copy))})")
+            add(f"- Already synchronised: {len(p.already_synced)}")
+            add(f"- Adopted (already on disk, re-recorded): {len(p.to_adopt)}")
+            add(f"- Conflicts (copied under a versioned name): {len(p.conflicts)}")
             for c in p.conflicts:
-                add(f"  - `{c.remote.path}` → `{c.versioned_path}` — {c.reason}")
-            add(f"- Disparus de l'iPhone (conservés sur PC) : {len(p.missing_on_device)}")
+                add(f"  - `{c.remote.path}` -> `{c.versioned_path}` — {c.reason}")
+            add(f"- Gone from the device (kept on the PC): {len(p.missing_on_device)}")
             for e in p.missing_on_device:
-                add(f"  - `{e.source_path}` (copié le "
+                add(f"  - `{e.source_path}` (copied on "
                     f"{time.strftime('%Y-%m-%d', time.localtime(e.synced_at))}, "
-                    f"local : `{e.local_path}`)")
+                    f"local: `{e.local_path}`)")
             add("")
 
         add("## Copies")
         add("")
         copied_bytes = sum(c.remote.size for c in self.copies)
         resumed = [c for c in self.copies if c.resumed_from > 0]
-        add(f"- Fichiers copiés : {len(self.copies)} ({_fmt_bytes(copied_bytes)})")
+        add(f"- Files copied: {len(self.copies)} ({_fmt_bytes(copied_bytes)})")
         if resumed:
-            add(f"- Dont reprises en cours de fichier : {len(resumed)}")
+            add(f"- Of which resumed mid-file: {len(resumed)}")
             for c in resumed:
-                add(f"  - `{c.remote.path}` repris à l'octet {c.resumed_from}")
+                add(f"  - `{c.remote.path}` resumed at byte {c.resumed_from}")
         if self.duplicates_routed:
-            add(f"- Doublons de contenu rangés sous `_Doublons/` : "
+            add(f"- Content duplicates filed under `_Duplicates/`: "
                 f"{len(self.duplicates_routed)}")
             for src, dup_rel, original in self.duplicates_routed:
-                add(f"  - `{src}` → `{dup_rel}` (identique à `{original}`)")
+                add(f"  - `{src}` -> `{dup_rel}` (identical to `{original}`)")
         if self.failures:
-            add(f"- **Échecs : {len(self.failures)}**")
+            add(f"- **Failures: {len(self.failures)}**")
             for path, err in self.failures:
-                add(f"  - `{path}` : {err}")
+                add(f"  - `{path}`: {err}")
         add("")
 
-        add("## Vérification de la destination")
+        add("## Destination verification")
         add("")
         if self.verification is None:
-            add("- **NON EFFECTUÉE** — cette exécution ne certifie rien.")
+            add("- **NOT PERFORMED** — this run certifies nothing.")
         else:
             v = self.verification
-            add(f"- Fichiers contrôlés : {v.checked_count}")
-            add(f"- Relus et hachés : {v.hashed_count}")
-            add(f"- Conformes : {v.ok_count}")
+            add(f"- Files checked: {v.checked_count}")
+            add(f"- Re-read and hashed: {v.hashed_count}")
+            add(f"- Conforming: {v.ok_count}")
             if v.ok:
-                add("- **Aucun écart.**")
+                add("- **No discrepancy.**")
             else:
-                add(f"- **ÉCARTS : {len(v.discrepancies)}** — liste nominative :")
+                add(f"- **DISCREPANCIES: {len(v.discrepancies)}** — full list:")
                 for d in v.discrepancies:
                     add(f"  - `{d.source_path}` [{d.kind}] {d.detail}")
         add("")
@@ -141,6 +141,6 @@ class RunReport:
     def save(self, dest_root: Path) -> Path:
         out_dir = Path(dest_root) / self.REPORTS_RELPATH
         out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / f"rapport_{self.run_id}.md"
+        path = out_dir / f"report_{self.run_id}.md"
         path.write_text(self.to_markdown(), encoding="utf-8")
         return path

@@ -3,15 +3,15 @@ from pathlib import Path
 
 import pytest
 
-# Rend le paquet importable sans installation.
+# Make the package importable without installing it.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from applesync.device.simulator import FaultPlan, SimProfile, SimulatedBackend  # noqa: E402
+from applesync.device.simulator import SimProfile, SimulatedBackend  # noqa: E402
 
 
 @pytest.fixture
 def backend() -> SimulatedBackend:
-    """Simulateur sain, petit profil (~180 fichiers de quelques Ko)."""
+    """Healthy simulator, small profile (~180 files of a few KB)."""
     return SimulatedBackend(SimProfile.small())
 
 

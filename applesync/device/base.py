@@ -1,9 +1,8 @@
-"""Contrat abstrait d'accès à l'appareil.
+"""Abstract device-access contract.
 
-Toute la logique métier (inventaire, plan, copie, vérification) ne voit que
-ces interfaces. Règle absolue : aucune méthode d'écriture ou de suppression
-côté appareil n'existe dans ce contrat — l'iPhone est en lecture seule par
-construction.
+All business logic (inventory, plan, copy, verification) sees only these
+interfaces. Absolute rule: no write or delete method exists in this contract —
+the iPhone is read-only by construction, not by policy.
 """
 
 from __future__ import annotations
@@ -15,14 +14,14 @@ from typing import Iterator, Optional
 
 
 class DeviceState(Enum):
-    """État de l'appareil tel que présenté à l'UI."""
+    """Device state as presented to the UI."""
 
-    ABSENT = "absent"            # usbmuxd répond mais aucun appareil sur le bus
-    NO_USBMUXD = "no_usbmuxd"    # usbmuxd/Apple Mobile Device injoignable
-    LOCKED = "locked"            # détecté mais verrouillé par code
-    UNTRUSTED = "untrusted"      # détecté mais l'utilisateur n'a pas touché « Se fier »
-    READY = "ready"              # appairé, session possible
-    ERROR = "error"              # détecté mais dialogue impossible (cause inconnue)
+    ABSENT = "absent"            # usbmuxd answers but no device on the bus
+    NO_USBMUXD = "no_usbmuxd"    # usbmuxd / Apple Mobile Device unreachable
+    LOCKED = "locked"            # detected but locked with a passcode
+    UNTRUSTED = "untrusted"      # detected but the user has not tapped "Trust"
+    READY = "ready"              # paired, a session can be opened
+    ERROR = "error"              # detected but unreachable (unknown cause)
 
 
 @dataclass(frozen=True)
@@ -35,23 +34,24 @@ class DeviceInfo:
 
 @dataclass(frozen=True)
 class RemoteFile:
-    """Un fichier de l'appareil, tel que vu à l'inventaire.
+    """A file on the device, as seen by the inventory.
 
-    `path` est relatif à la racine DCIM, séparateur POSIX
-    (ex. « 202301_a/IMG_0001.HEIC »).
+    `path` is relative to the DCIM root, POSIX separators
+    (e.g. "100APPLE/IMG_0001.HEIC"). Files living outside DCIM carry their
+    zone as a prefix (e.g. "CPLAssets/group159/…").
     """
 
     path: str
     size: int
-    mtime: int                    # epoch secondes (troncature volontaire, voir DECISIONS.md)
+    mtime: int                    # epoch seconds (deliberately truncated)
     birthtime: Optional[int] = None
 
     @property
     def identity(self) -> tuple[str, int, int]:
-        """Critère d'identité incrémental : chemin + taille + mtime.
+        """Incremental identity: path + size + mtime.
 
-        Plus solide que le seul nom : un fichier recréé avec le même nom
-        mais un contenu différent change de taille et/ou de mtime.
+        Stronger than the name alone: a file recreated under the same name
+        with different content changes size and/or mtime.
         """
         return (self.path, self.size, self.mtime)
 
@@ -61,44 +61,44 @@ class RemoteFile:
 
 
 # ---------------------------------------------------------------------------
-# Hiérarchie d'erreurs. Toute implémentation DOIT traduire ses erreurs natives
-# vers ces classes : la logique métier ne connaît qu'elles.
+# Error hierarchy. Every implementation MUST translate its native errors into
+# these classes: business logic knows nothing else.
 # ---------------------------------------------------------------------------
 
 class DeviceError(Exception):
-    """Erreur d'accès appareil (base)."""
+    """Device-access error (base class)."""
 
 
 class DeviceAbsentError(DeviceError):
-    """Aucun appareil connecté."""
+    """No device connected."""
 
 
 class UsbmuxdUnavailableError(DeviceError):
-    """usbmuxd (Apple Mobile Device Support / CopyTrans) ne répond pas.
+    """usbmuxd (Apple Mobile Device Support / CopyTrans) is not answering.
 
-    À distinguer de DeviceAbsentError : ici c'est le PC qui n'est pas prêt,
-    pas l'iPhone qui manque."""
+    Distinct from DeviceAbsentError: here the PC is not ready, rather than
+    the iPhone being missing."""
 
 
 class DeviceLockedError(DeviceError):
-    """Appareil verrouillé par code : déverrouiller l'écran."""
+    """Device locked with a passcode: unlock the screen."""
 
 
 class DeviceUntrustedError(DeviceError):
-    """Appairage refusé ou en attente : toucher « Se fier » sur l'iPhone."""
+    """Pairing refused or pending: tap "Trust" on the iPhone."""
 
 
 class DeviceDisconnectedError(DeviceError):
-    """La session est tombée en cours d'opération (débranché, écran verrouillé…)."""
+    """The session dropped mid-operation (unplugged, screen locked…)."""
 
 
 class FileReadError(DeviceError):
-    """Échec de lecture d'un fichier, avec position exacte."""
+    """A file read failed, with the exact position."""
 
     def __init__(self, path: str, offset: int, message: str = ""):
         self.path = path
         self.offset = offset
-        super().__init__(f"Lecture échouée sur {path} à l'octet {offset}: {message}")
+        super().__init__(f"Read failed on {path} at byte {offset}: {message}")
 
 
 # ---------------------------------------------------------------------------
@@ -106,18 +106,18 @@ class FileReadError(DeviceError):
 # ---------------------------------------------------------------------------
 
 class RemoteFileReader(ABC):
-    """Lecteur séquentiel d'un fichier de l'appareil, avec positionnement."""
+    """Sequential reader over a device file, with positioning."""
 
     @abstractmethod
     def seek(self, offset: int) -> None:
-        """Se positionne à `offset` octets du début."""
+        """Move to `offset` bytes from the start."""
 
     @abstractmethod
     def read(self, size: int) -> bytes:
-        """Lit jusqu'à `size` octets. b'' signifie fin de fichier.
+        """Read up to `size` bytes. b'' means end of file.
 
-        Lève FileReadError ou DeviceDisconnectedError en cas de problème —
-        jamais de résultat court silencieux avant la fin du fichier.
+        Raises FileReadError or DeviceDisconnectedError on trouble — never a
+        silent short read before the end of the file.
         """
 
     @abstractmethod
@@ -131,10 +131,10 @@ class RemoteFileReader(ABC):
 
 
 class DeviceSession(ABC):
-    """Session ouverte avec un appareil appairé.
+    """An open session with a paired device.
 
-    Une session peut tomber à tout moment (verrouillage d'écran, débranchement) :
-    toutes les méthodes peuvent lever DeviceDisconnectedError.
+    A session can drop at any moment (screen lock, unplug): every method may
+    raise DeviceDisconnectedError.
     """
 
     @abstractmethod
@@ -142,32 +142,32 @@ class DeviceSession(ABC):
 
     @abstractmethod
     def walk_dcim(self) -> Iterator[RemoteFile]:
-        """Énumère récursivement TOUS les fichiers sous DCIM.
+        """Recursively enumerate EVERY file of the photo library.
 
-        Ordre non garanti. Toute erreur interrompt l'itération par une
-        exception : un générateur qui se termine sans exception a, par
-        contrat, tout énuméré. (La défense contre une troncature silencieuse
-        malgré ce contrat est la double énumération, voir core/inventory.py.)
+        Order is not guaranteed. Any error interrupts iteration with an
+        exception: by contract, a generator that finishes without raising has
+        enumerated everything. (The defence against a silent truncation
+        despite that contract is the double enumeration, see core/inventory.)
         """
 
     @abstractmethod
     def stat(self, path: str) -> RemoteFile:
-        """Stat d'un fichier par chemin relatif DCIM. Lève si absent."""
+        """Stat a file by inventory path. Raises if missing."""
 
     @abstractmethod
     def open_file(self, path: str) -> RemoteFileReader: ...
 
-    # -- accès Media hors DCIM (lecture seule), pour la base Photos.sqlite ----
-    # Chemins absolus dans le jail AFC (/var/mobile/Media), ex. «/PhotoData/…».
-    # Implémentation facultative : l'absence rend l'erreur, jamais un vide.
+    # -- Media access outside DCIM (read-only), for the Photos database ------
+    # Absolute paths inside the AFC jail (/var/mobile/Media), e.g. "/PhotoData/…".
+    # Optional to implement: absence raises, never returns empty.
 
     def stat_media(self, path: str) -> int:
-        """Taille d'un fichier du jail Media. Lève si absent/inaccessible."""
-        raise FileReadError(path, 0, "accès Media non disponible sur ce backend")
+        """Size of a file in the Media jail. Raises if missing/unreachable."""
+        raise FileReadError(path, 0, "Media access unavailable on this backend")
 
     def open_media(self, path: str) -> RemoteFileReader:
-        """Ouvre en lecture un fichier du jail Media."""
-        raise FileReadError(path, 0, "accès Media non disponible sur ce backend")
+        """Open a file of the Media jail for reading."""
+        raise FileReadError(path, 0, "Media access unavailable on this backend")
 
     @abstractmethod
     def close(self) -> None: ...
@@ -180,17 +180,17 @@ class DeviceSession(ABC):
 
 
 class DeviceBackend(ABC):
-    """Point d'entrée : détection des appareils et ouverture de session."""
+    """Entry point: device discovery and session opening."""
 
     @abstractmethod
     def list_devices(self) -> list[DeviceInfo]:
-        """Appareils actuellement visibles sur le bus (sans ouvrir de session)."""
+        """Devices currently visible on the bus (without opening a session)."""
 
     @abstractmethod
     def probe_state(self, udid: str) -> DeviceState:
-        """État actionnable de l'appareil (verrouillé / non appairé / prêt)."""
+        """Actionable device state (locked / untrusted / ready)."""
 
     @abstractmethod
     def connect(self, udid: str) -> DeviceSession:
-        """Ouvre une session. Lève DeviceLockedError / DeviceUntrustedError /
-        DeviceAbsentError selon l'état réel."""
+        """Open a session. Raises DeviceLockedError / DeviceUntrustedError /
+        DeviceAbsentError depending on the actual state."""

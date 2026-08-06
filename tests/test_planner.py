@@ -1,4 +1,4 @@
-"""Plan incrémental : critère plus fort que le nom, idempotence, disparitions."""
+"""Incremental plan: identity stronger than the name, idempotence, deletions."""
 
 import os
 import time
@@ -6,7 +6,6 @@ import time
 from applesync.core.inventory import take_inventory
 from applesync.core.manifest import Manifest
 from applesync.core.planner import build_plan, local_target
-from applesync.device.simulator import SimProfile, SimulatedBackend
 
 
 def _inventory(backend):
@@ -14,7 +13,7 @@ def _inventory(backend):
         return take_inventory(s)
 
 
-def test_premier_passage_tout_a_copier(backend, dest):
+def test_first_run_copies_everything(backend, dest):
     inv = _inventory(backend)
     with Manifest(dest) as m:
         plan = build_plan(inv, m, dest)
@@ -24,7 +23,7 @@ def test_premier_passage_tout_a_copier(backend, dest):
     assert not plan.missing_on_device
 
 
-def test_apres_enregistrement_plus_rien_a_copier(backend, dest):
+def test_nothing_left_to_copy_once_recorded(backend, dest):
     inv = _inventory(backend)
     with Manifest(dest) as m:
         for f in inv.files:
@@ -34,39 +33,39 @@ def test_apres_enregistrement_plus_rien_a_copier(backend, dest):
     assert len(plan.already_synced) == inv.count
 
 
-def test_nouveau_fichier_seul_a_copier(backend, dest):
+def test_only_the_new_file_is_copied(backend, dest):
     inv = _inventory(backend)
     with Manifest(dest) as m:
         for f in inv.files:
             m.record_file(f, "deadbeef", local_target(f.path), "run1", inv.device_udid)
-        nouveau = backend.add_file("202312_a/IMG_99999.HEIC", 4321, 1_700_000_000)
+        added = backend.add_file("202312_a/IMG_99999.HEIC", 4321, 1_700_000_000)
         inv2 = _inventory(backend)
         plan = build_plan(inv2, m, dest)
-    assert [f.path for f in plan.to_copy] == [nouveau.path]
+    assert [f.path for f in plan.to_copy] == [added.path]
 
 
-def test_meme_nom_contenu_different_est_un_conflit(backend, dest):
-    """Le critère d'identité doit dépasser le nom : un fichier local présent au
-    chemin cible mais de taille différente ne doit JAMAIS être écrasé."""
+def test_same_name_different_content_is_a_conflict(backend, dest):
+    """Identity must go beyond the name: a local file at the target path with
+    a different size must NEVER be overwritten."""
     inv = _inventory(backend)
-    victime = inv.files[0]
-    local = dest / local_target(victime.path)
+    victim = inv.files[0]
+    local = dest / local_target(victim.path)
     local.parent.mkdir(parents=True)
-    local.write_bytes(b"contenu local divergent")  # taille != victime.size
+    local.write_bytes(b"diverging local content")  # size != victim.size
 
     with Manifest(dest) as m:
         plan = build_plan(inv, m, dest)
-    conflit = [c for c in plan.conflicts if c.remote.path == victime.path]
-    assert len(conflit) == 1
-    assert conflit[0].versioned_path != local_target(victime.path)
-    assert ".~2" in conflit[0].versioned_path
-    # Le fichier n'est PAS dans to_copy (il irait écraser le local)
-    assert victime.path not in [f.path for f in plan.to_copy]
+    conflict = [c for c in plan.conflicts if c.remote.path == victim.path]
+    assert len(conflict) == 1
+    assert conflict[0].versioned_path != local_target(victim.path)
+    assert ".~2" in conflict[0].versioned_path
+    # The file is NOT in to_copy (it would overwrite the local one)
+    assert victim.path not in [f.path for f in plan.to_copy]
 
 
-def test_adoption_fichier_local_identique(backend, dest):
-    """Manifeste perdu mais fichier déjà sur disque avec taille+mtime exacts :
-    adopté, pas re-copié."""
+def test_identical_local_file_is_adopted(backend, dest):
+    """Manifest lost but the file is already on disk with the exact size and
+    mtime: adopt it, do not copy it again."""
     inv = _inventory(backend)
     f = inv.files[0]
     local = dest / local_target(f.path)
@@ -80,30 +79,30 @@ def test_adoption_fichier_local_identique(backend, dest):
     assert f.path not in [c.path for c in plan.to_copy]
 
 
-def test_suppression_sur_iphone_signalee_fichier_conserve(backend, dest):
+def test_device_deletion_is_reported_and_the_file_kept(backend, dest):
     inv = _inventory(backend)
-    disparu = inv.files[5]
+    gone = inv.files[5]
     with Manifest(dest) as m:
         for f in inv.files:
             m.record_file(f, "deadbeef", local_target(f.path), "run1", inv.device_udid)
-        backend.remove_file(disparu.path)
+        backend.remove_file(gone.path)
         inv2 = _inventory(backend)
         plan = build_plan(inv2, m, dest)
-    assert [e.source_path for e in plan.missing_on_device] == [disparu.path]
-    # Rien à copier ni à supprimer : le local reste
+    assert [e.source_path for e in plan.missing_on_device] == [gone.path]
+    # Nothing to copy nor to delete: the local file stays
     assert not plan.to_copy
 
 
-def test_fichier_remplace_sur_iphone(backend, dest):
-    """Même chemin, nouvelle identité : l'ancienne version est signalée disparue,
-    la nouvelle est à copier (en conflit si le local existe)."""
+def test_file_replaced_on_the_device(backend, dest):
+    """Same path, new identity: the old version is reported gone, the new one
+    is to be copied (as a conflict if a local file exists)."""
     inv = _inventory(backend)
-    cible = inv.files[7]
+    target = inv.files[7]
     with Manifest(dest) as m:
         for f in inv.files:
             m.record_file(f, "deadbeef", local_target(f.path), "run1", inv.device_udid)
-        backend.replace_file(cible.path, cible.size + 999, cible.mtime + 3600)
+        backend.replace_file(target.path, target.size + 999, target.mtime + 3600)
         inv2 = _inventory(backend)
         plan = build_plan(inv2, m, dest)
-    assert cible.path in [f.path for f in plan.to_copy]          # local absent → copie simple
-    assert cible.identity in [e.identity for e in plan.missing_on_device]
+    assert target.path in [f.path for f in plan.to_copy]   # no local file -> plain copy
+    assert target.identity in [e.identity for e in plan.missing_on_device]

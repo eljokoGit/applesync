@@ -1,15 +1,14 @@
-"""Vérification de mise à jour, en consultation seule.
+"""Update check, read-only.
 
-L'application interroge l'API GitHub pour connaître la dernière version
-publiée et le signale à l'utilisateur. Elle ne télécharge rien, n'installe
-rien et n'exécute rien automatiquement : pour un outil de sauvegarde, une
-mise à jour silencieuse serait exactement le genre de comportement qu'on ne
-veut pas. La mise à jour reste un geste explicite (voir README).
+The application asks the GitHub API for the latest published version and tells
+the user about it. It downloads nothing, installs nothing and executes nothing
+automatically: for a backup tool, a silent update is exactly the kind of
+behaviour you do not want. Updating stays an explicit act (see the README).
 
-Discrétion : une seule requête HTTPS anonyme vers api.github.com, aucune
-donnée envoyée, désactivable par configuration. Toute erreur (hors ligne,
-API indisponible, réponse inattendue) rend None sans bruit — une
-vérification de version ne doit jamais gêner une sauvegarde.
+Discretion: a single anonymous HTTPS request to api.github.com, no data sent,
+disableable in the configuration. Any error (offline, API down, unexpected
+response) returns None quietly — a version check must never get in the way of
+a backup.
 """
 
 from __future__ import annotations
@@ -40,9 +39,9 @@ class UpdateInfo:
 
 
 def parse_version(text: str) -> Optional[tuple]:
-    """« v1.2.3 », « 1.2.3rc1 » → tuple comparable ; None si illisible.
+    """"v1.2.3", "1.2.3rc1" -> a comparable tuple; None when unreadable.
 
-    Une version stable l'emporte sur une pré-version de même numéro
+    A stable version outranks a pre-release of the same number
     (1.2.0 > 1.2.0rc1)."""
     if not text:
         return None
@@ -57,10 +56,10 @@ def parse_version(text: str) -> Optional[tuple]:
 
 
 def is_newer(latest: str, current: str) -> bool:
-    """La version publiée est-elle plus récente que celle installée ?
+    """Is the published version newer than the installed one?
 
-    Prudence : si l'une des deux est illisible, on répond False — mieux vaut
-    ne rien signaler qu'annoncer une mise à jour qui n'en est pas une."""
+    Cautious by design: if either is unreadable the answer is False — better
+    to stay silent than to announce an update that is not one."""
     a, b = parse_version(latest), parse_version(current)
     if a is None or b is None:
         return False
@@ -68,9 +67,9 @@ def is_newer(latest: str, current: str) -> bool:
 
 
 def check_for_update(current_version: str, timeout: float = 5.0) -> Optional[UpdateInfo]:
-    """Rend un UpdateInfo si une version plus récente existe, sinon None.
+    """Return an UpdateInfo when a newer version exists, otherwise None.
 
-    Ne lève jamais."""
+    Never raises."""
     try:
         req = urllib.request.Request(
             RELEASES_API,

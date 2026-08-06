@@ -1,17 +1,17 @@
-"""Test de stabilité : le critère de réussite du projet, mesuré.
+"""Stability check: the project's success criterion, measured.
 
-Trois inventaires successifs — avec débranchement/rebranchement entre chacun —
-doivent renvoyer exactement le même nombre de fichiers, le même volume et la
-même empreinte. Ce module exécute la mesure et rend un verdict nominatif.
+Three successive inventories — unplugging and replugging the device between
+each — must return exactly the same file count, the same volume and the same
+fingerprint. This module runs the measurement and returns a verdict naming
+every divergence.
 
-Le débranchement est demandé à l'utilisateur via `wait_between_rounds`
-(l'UI attend la disparition puis la réapparition de l'appareil) ; les tests
-utilisent un callback qui reconnecte le simulateur.
+The unplug is requested from the user through `wait_between_rounds` (the UI
+waits for the device to disappear and come back); tests pass a callback that
+simply reconnects the simulator.
 """
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -31,7 +31,7 @@ class StabilityRound:
 @dataclass
 class StabilityResult:
     rounds: list[StabilityRound] = field(default_factory=list)
-    diffs: list[str] = field(default_factory=list)   # écarts nominatifs entre passes
+    diffs: list[str] = field(default_factory=list)   # named differences between passes
 
     @property
     def stable(self) -> bool:
@@ -49,19 +49,19 @@ class StabilityResult:
         if self.stable:
             r = self.rounds[0]
             return (
-                f"STABLE : {len(self.rounds)} inventaires identiques — "
-                f"{r.count} fichiers, {r.total_bytes} octets, "
-                f"empreinte {r.fingerprint[:16]}…"
+                f"STABLE: {len(self.rounds)} identical inventories — "
+                f"{r.count} files, {r.total_bytes} bytes, "
+                f"fingerprint {r.fingerprint[:16]}…"
             )
-        lines = ["INSTABLE : les inventaires divergent."]
+        lines = ["UNSTABLE: the inventories diverge."]
         for r in self.rounds:
             lines.append(
-                f"  passe {r.index}: {r.count} fichiers, {r.total_bytes} octets, "
-                f"empreinte {r.fingerprint[:16]}…"
+                f"  pass {r.index}: {r.count} files, {r.total_bytes} bytes, "
+                f"fingerprint {r.fingerprint[:16]}…"
             )
-        lines.extend(f"  écart : {d}" for d in self.diffs[:50])
+        lines.extend(f"  difference: {d}" for d in self.diffs[:50])
         if len(self.diffs) > 50:
-            lines.append(f"  … et {len(self.diffs) - 50} autres écarts")
+            lines.append(f"  … and {len(self.diffs) - 50} more differences")
         return "\n".join(lines)
 
 
@@ -73,10 +73,10 @@ def run_stability_check(
     progress_cb: Optional[ProgressCb] = None,
     cancel: Optional[Callable[[], bool]] = None,
 ) -> StabilityResult:
-    """Exécute `rounds` inventaires complets (chacun déjà à double énumération).
+    """Run `rounds` full inventories (each already double-enumerated).
 
-    `wait_between_rounds(i)` est appelé entre les passes : c'est là que l'UI
-    demande le débranchement/rebranchement et attend l'appareil.
+    `wait_between_rounds(i)` is called between passes: that is where the UI
+    asks for the unplug/replug and waits for the device.
     """
     result = StabilityResult()
     inventories: list[Inventory] = []
@@ -100,17 +100,19 @@ def run_stability_check(
             )
         )
 
-    # Écarts nominatifs entre la première passe et chacune des suivantes.
+    # Named differences between the first pass and each of the following ones.
     if inventories:
         ref = {f.path: f for f in inventories[0].files}
         for round_no, inv in enumerate(inventories[1:], start=2):
             cur = {f.path: f for f in inv.files}
             for p in sorted(set(ref) - set(cur)):
-                result.diffs.append(f"{p} : vu passe 1, absent passe {round_no}")
+                result.diffs.append(f"{p}: seen in pass 1, absent in pass {round_no}")
             for p in sorted(set(cur) - set(ref)):
-                result.diffs.append(f"{p} : absent passe 1, vu passe {round_no}")
+                result.diffs.append(f"{p}: absent in pass 1, seen in pass {round_no}")
             for p in sorted(set(ref) & set(cur)):
                 if ref[p].identity != cur[p].identity:
-                    result.diffs.append(f"{p} : métadonnées différentes entre passes 1 et {round_no}")
+                    result.diffs.append(
+                        f"{p}: metadata differ between passes 1 and {round_no}"
+                    )
 
     return result

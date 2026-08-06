@@ -1,9 +1,9 @@
-"""Fenêtre principale AppleSync. Lisibilité de l'état avant esthétique.
+"""AppleSync main window. Legibility of state before aesthetics.
 
-Machine à états de la fenêtre :
-    REPOS → PRÉPARATION → PLAN_PRÊT → SYNCHRO → REPOS
-                                    ↘ interruption propre ↗
-    (VÉRIFICATION et STABILITÉ sont des opérations exclusives depuis REPOS)
+Window state machine:
+    IDLE -> PREPARING -> PLAN_READY -> SYNCING -> IDLE
+                                    \\ clean interruption /
+    (VERIFYING, STABILITY and ALBUMS are exclusive operations from IDLE)
 """
 
 from __future__ import annotations
@@ -13,8 +13,7 @@ import threading
 from enum import Enum, auto
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -36,8 +35,9 @@ from PySide6.QtWidgets import (
 
 from applesync import __version__
 from applesync.core.config import Config
-from applesync.core.engine import PreparedRun, ProgressSnapshot, SyncEngine
-from applesync.core.layout import label_for, layout_from_id, make_layout
+from applesync.core.engine import COMPLETED, FAILED, INTERRUPTED, PreparedRun, \
+    ProgressSnapshot, SyncEngine
+from applesync.core.layout import label_for, make_layout
 from applesync.core.manifest import Manifest
 from applesync.core.report import RunReport, fmt_bytes, fmt_duration
 from applesync.core.stability import StabilityResult
@@ -53,38 +53,39 @@ from applesync.ui.workers import (
 )
 
 STATE_STYLES = {
-    DeviceState.ABSENT: ("#9e9e9e", "Aucun iPhone détecté",
-                         "Le service Apple répond mais ne voit aucun appareil. "
-                         "Branchez l'iPhone en USB ; si le câble est branché, "
-                         "essayez un autre câble (certains ne font que la charge) "
-                         "ou un autre port USB, et déverrouillez l'iPhone."),
-    DeviceState.NO_USBMUXD: ("#c62828", "Service Apple Mobile Device injoignable",
-                             "Le pilote usbmuxd ne répond pas sur 127.0.0.1:27015 : "
-                             "ce PC ne peut voir aucun iPhone, même branché. "
-                             "Installez iTunes (Apple Mobile Device Support) ou les "
-                             "pilotes CopyTrans, puis relancez. S'il est déjà installé, "
-                             "démarrez le service « Apple Mobile Device Service » "
-                             "(services.msc)."),
-    DeviceState.LOCKED: ("#e69100", "iPhone verrouillé",
-                         "Déverrouillez l'écran de l'iPhone (code ou Face ID)."),
-    DeviceState.UNTRUSTED: ("#e69100", "iPhone non appairé",
-                            "Sur l'iPhone : touchez « Se fier à cet ordinateur » "
-                            "puis saisissez le code."),
-    DeviceState.READY: ("#1a7f37", "iPhone prêt",
-                        "Vous pouvez lancer l'inventaire."),
-    DeviceState.ERROR: ("#c62828", "Appareil détecté mais dialogue impossible",
-                        "Débranchez/rebranchez le câble. Si cela persiste, "
-                        "redémarrez le service Apple Mobile Device."),
+    DeviceState.ABSENT: ("#9e9e9e", "No device detected",
+                         "The Apple service is answering but sees no device. "
+                         "Plug the iPhone in over USB; if the cable is already "
+                         "connected, try another cable (many are charge-only) "
+                         "or another USB port, and unlock the device."),
+    DeviceState.NO_USBMUXD: ("#c62828", "Apple Mobile Device service unreachable",
+                             "The usbmuxd driver is not answering on "
+                             "127.0.0.1:27015: this PC cannot see any iPhone, "
+                             "even plugged in. Install iTunes (Apple Mobile "
+                             "Device Support), the Apple Devices app or the "
+                             "CopyTrans drivers, then restart. If it is already "
+                             "installed, start the \"Apple Mobile Device "
+                             "Service\" (services.msc)."),
+    DeviceState.LOCKED: ("#e69100", "Device locked",
+                         "Unlock the device screen (passcode or Face ID)."),
+    DeviceState.UNTRUSTED: ("#e69100", "Device not paired",
+                            "On the device: tap \"Trust This Computer\", then "
+                            "enter the passcode."),
+    DeviceState.READY: ("#1a7f37", "Device ready",
+                        "You can run the inventory."),
+    DeviceState.ERROR: ("#c62828", "Device detected but unreachable",
+                        "Unplug and plug the cable back in. If it persists, "
+                        "restart the Apple Mobile Device service."),
 }
 
 
 class UiState(Enum):
-    REPOS = auto()
-    PREPARATION = auto()
-    PLAN_PRET = auto()
-    SYNCHRO = auto()
-    VERIFICATION = auto()
-    STABILITE = auto()
+    IDLE = auto()
+    PREPARING = auto()
+    PLAN_READY = auto()
+    SYNCING = auto()
+    VERIFYING = auto()
+    STABILITY = auto()
     ALBUMS = auto()
 
 
@@ -97,16 +98,16 @@ class MainWindow(QMainWindow):
         self.config = config or Config()
         self.cancel = threading.Event()
         self.prepared: PreparedRun | None = None
-        self._expected_files: int | None = None   # compte du dernier inventaire connu
+        self._expected_files: int | None = None   # count of the last known inventory
         self.current_udid: str = ""
         self.device_state: DeviceState = DeviceState.ABSENT
-        self.ui_state = UiState.REPOS
+        self.ui_state = UiState.IDLE
         self._workers: list = []
 
-        titre = "AppleSync — sauvegarde iPhone → PC"
+        title = "AppleSync — iPhone to PC backup"
         if simulate:
-            titre += "   [MODE SIMULATION — aucun vrai iPhone]"
-        self.setWindowTitle(titre)
+            title += "   [SIMULATION MODE — no real device]"
+        self.setWindowTitle(title)
         self.resize(920, 780)
         self._build()
 
@@ -118,12 +119,12 @@ class MainWindow(QMainWindow):
         self._show_last_run_summary()
         self._start_update_check()
 
-    # ------------------------------------------------------------------ maj
+    # ------------------------------------------------------------------ updates
     def _start_update_check(self) -> None:
-        """Vérifie une fois s'il existe une version plus récente.
+        """Check once whether a newer version exists.
 
-        Désactivable : « check_updates » à false dans la configuration.
-        Aucune donnée n'est envoyée, rien n'est téléchargé ni installé."""
+        Can be disabled with "check_updates": false in the configuration.
+        No data is sent, nothing is downloaded or installed."""
         if not self.config.get("check_updates", True):
             return
         w = UpdateCheckWorker(__version__, self)
@@ -134,8 +135,8 @@ class MainWindow(QMainWindow):
 
     def _on_update_available(self, info) -> None:
         self.update_label.setText(
-            f"Version {info.latest} disponible (vous utilisez la {info.current}). "
-            f"La mise à jour est manuelle : voir les notes de version."
+            f"Version {info.latest} is available (you are running "
+            f"{info.current}). Updating is manual: see the release notes."
         )
         try:
             self.btn_update.clicked.disconnect()
@@ -152,11 +153,11 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.setSpacing(10)
 
-        # Bannière d'état appareil
+        # Device state banner
         self.banner = QFrame()
         self.banner.setFrameShape(QFrame.StyledPanel)
         banner_lay = QVBoxLayout(self.banner)
-        self.state_label = QLabel("Recherche de l'appareil…")
+        self.state_label = QLabel("Looking for a device…")
         f = QFont()
         f.setPointSize(13)
         f.setBold(True)
@@ -167,49 +168,51 @@ class MainWindow(QMainWindow):
         banner_lay.addWidget(self.state_hint)
         root.addWidget(self.banner)
 
-        # Destination + organisation
-        dest_box = QGroupBox("Destination de la sauvegarde")
+        # Destination + layout
+        dest_box = QGroupBox("Backup destination")
         dest_v = QVBoxLayout(dest_box)
         dest_row = QHBoxLayout()
         self.dest_label = QLabel(self._dest_text())
         self.dest_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.dest_btn = QPushButton("Choisir…")
+        self.dest_btn = QPushButton("Choose…")
         self.dest_btn.clicked.connect(self._choose_dest)
         dest_row.addWidget(self.dest_label, stretch=1)
         dest_row.addWidget(self.dest_btn)
         dest_v.addLayout(dest_row)
 
         layout_row = QHBoxLayout()
-        layout_row.addWidget(QLabel("Organisation :"))
+        layout_row.addWidget(QLabel("Layout:"))
         self.layout_combo = QComboBox()
-        self.layout_combo.addItem("Miroir du DCIM (par défaut)", "miroir")
-        self.layout_combo.addItem("Par date (AAAA/AAAA-MM)", "date")
+        self.layout_combo.addItem("Mirror of the device tree (default)", "mirror")
+        self.layout_combo.addItem("By date (YYYY/YYYY-MM)", "date")
         self.layout_combo.addItem(
-            "Comme l'archive (AAAA/AAAA-MM, renommage date, _LivePhotos)", "archive"
+            "Archive (YYYY/YYYY-MM, date renaming, _LivePhotos)", "archive"
         )
-        self.captures_check = QCheckBox("Captures d'écran (PNG) à part")
+        self.screenshots_check = QCheckBox("Screenshots (PNG) apart")
         self.layout_lock_label = QLabel("")
-        kind = self.config.get("layout", "miroir")
+        kind = self.config.get("layout", "mirror")
         idx = self.layout_combo.findData(kind)
         self.layout_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self.captures_check.setChecked(bool(self.config.get("captures_apart", False)))
+        self.screenshots_check.setChecked(
+            bool(self.config.get("screenshots_apart", False))
+        )
         self.layout_combo.currentIndexChanged.connect(self._on_layout_changed)
-        self.captures_check.toggled.connect(self._on_layout_changed)
+        self.screenshots_check.toggled.connect(self._on_layout_changed)
         layout_row.addWidget(self.layout_combo)
-        layout_row.addWidget(self.captures_check)
+        layout_row.addWidget(self.screenshots_check)
         layout_row.addWidget(self.layout_lock_label, stretch=1)
         dest_v.addLayout(layout_row)
         root.addWidget(dest_box)
 
         # Actions
         actions = QHBoxLayout()
-        self.btn_inventory = QPushButton("1. Inventorier")
-        self.btn_sync = QPushButton("2. Synchroniser")
-        self.btn_verify = QPushButton("Vérifier la destination")
-        self.btn_stability = QPushButton("Test de stabilité (3×)")
-        self.btn_duplicates = QPushButton("Doublons")
+        self.btn_inventory = QPushButton("1. Inventory")
+        self.btn_sync = QPushButton("2. Synchronise")
+        self.btn_verify = QPushButton("Verify destination")
+        self.btn_stability = QPushButton("Stability check (3x)")
+        self.btn_duplicates = QPushButton("Duplicates")
         self.btn_albums = QPushButton("Albums")
-        self.btn_cancel = QPushButton("Interrompre proprement")
+        self.btn_cancel = QPushButton("Stop cleanly")
         self.btn_inventory.clicked.connect(self._start_prepare)
         self.btn_sync.clicked.connect(self._start_execute)
         self.btn_verify.clicked.connect(self._start_verify)
@@ -223,17 +226,17 @@ class MainWindow(QMainWindow):
             actions.addWidget(b)
         root.addLayout(actions)
 
-        # Inventaire / plan
-        self.plan_box = QGroupBox("Inventaire et plan (à valider avant copie)")
+        # Inventory / plan
+        self.plan_box = QGroupBox("Inventory and plan (validate before copying)")
         plan_lay = QVBoxLayout(self.plan_box)
-        self.plan_label = QLabel("Aucun inventaire pour l'instant.")
+        self.plan_label = QLabel("No inventory yet.")
         self.plan_label.setWordWrap(True)
         self.plan_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         plan_lay.addWidget(self.plan_label)
         root.addWidget(self.plan_box)
 
-        # Progression
-        prog_box = QGroupBox("Progression")
+        # Progress
+        prog_box = QGroupBox("Progress")
         grid = QGridLayout(prog_box)
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 1000)
@@ -242,30 +245,30 @@ class MainWindow(QMainWindow):
         self.lbl_file.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.lbl_counts = QLabel("—")
         self.lbl_speed = QLabel("—")
-        self.lbl_phase = QLabel("En attente.")
+        self.lbl_phase = QLabel("Waiting.")
         grid.addWidget(self.progress_bar, 0, 0, 1, 2)
-        grid.addWidget(QLabel("Fichier :"), 1, 0)
+        grid.addWidget(QLabel("File:"), 1, 0)
         grid.addWidget(self.lbl_file, 1, 1)
-        grid.addWidget(QLabel("Avancement :"), 2, 0)
+        grid.addWidget(QLabel("Progress:"), 2, 0)
         grid.addWidget(self.lbl_counts, 2, 1)
-        grid.addWidget(QLabel("Débit / ETA :"), 3, 0)
+        grid.addWidget(QLabel("Throughput / ETA:"), 3, 0)
         grid.addWidget(self.lbl_speed, 3, 1)
-        grid.addWidget(QLabel("Phase :"), 4, 0)
+        grid.addWidget(QLabel("Phase:"), 4, 0)
         grid.addWidget(self.lbl_phase, 4, 1)
         grid.setColumnStretch(1, 1)
         root.addWidget(prog_box)
 
-        # Rapport
-        rep_box = QGroupBox("Rapport")
+        # Report
+        rep_box = QGroupBox("Report")
         rep_lay = QVBoxLayout(rep_box)
         self.report_view = QTextBrowser()
         self.report_view.setOpenExternalLinks(False)
         self.report_view.setPlaceholderText(
-            "Le rapport final de chaque exécution s'affiche ici "
-            "(et il est archivé dans <destination>/.applesync/rapports/)."
+            "The final report of each run appears here (and is archived in "
+            "<destination>/.applesync/reports/)."
         )
         btn_row = QHBoxLayout()
-        self.btn_open_reports = QPushButton("Ouvrir le dossier des rapports")
+        self.btn_open_reports = QPushButton("Open the reports folder")
         self.btn_open_reports.clicked.connect(self._open_reports_dir)
         btn_row.addWidget(self.btn_open_reports)
         btn_row.addStretch(1)
@@ -273,7 +276,7 @@ class MainWindow(QMainWindow):
         rep_lay.addLayout(btn_row)
         root.addWidget(rep_box, stretch=1)
 
-        # Bandeau de mise à jour : masqué tant qu'il n'y a rien à signaler.
+        # Update banner: hidden until there is something to report.
         self.update_bar = QFrame()
         self.update_bar.setFrameShape(QFrame.StyledPanel)
         self.update_bar.setStyleSheet(
@@ -283,19 +286,19 @@ class MainWindow(QMainWindow):
         up_lay = QHBoxLayout(self.update_bar)
         self.update_label = QLabel("")
         self.update_label.setWordWrap(True)
-        self.btn_update = QPushButton("Voir la nouvelle version")
+        self.btn_update = QPushButton("See the new version")
         up_lay.addWidget(self.update_label, stretch=1)
         up_lay.addWidget(self.btn_update)
         self.update_bar.hide()
         root.addWidget(self.update_bar)
 
         self.setCentralWidget(central)
-        self.statusBar().showMessage(f"Prêt. AppleSync {__version__}")
+        self.statusBar().showMessage(f"Ready. AppleSync {__version__}")
 
     # ------------------------------------------------------------------ helpers
     def _dest_text(self) -> str:
         d = self.config.destination
-        return str(d) if d else "⚠ Aucune destination choisie."
+        return str(d) if d else "⚠ No destination chosen."
 
     def _dest_ok(self) -> bool:
         d = self.config.destination
@@ -303,24 +306,24 @@ class MainWindow(QMainWindow):
 
     def _engine(self) -> SyncEngine:
         layout = make_layout(
-            self.config.get("layout", "miroir"),
-            bool(self.config.get("captures_apart", False)),
+            self.config.get("layout", "mirror"),
+            bool(self.config.get("screenshots_apart", False)),
         )
         return SyncEngine(self.backend, self.config.destination, layout)
 
     def _on_layout_changed(self, *_):
         kind = self.layout_combo.currentData()
         self.config.set("layout", kind)
-        self.config.set("captures_apart", self.captures_check.isChecked())
-        self.captures_check.setEnabled(
+        self.config.set("screenshots_apart", self.screenshots_check.isChecked())
+        self.screenshots_check.setEnabled(
             kind == "date" and self.layout_combo.isEnabled()
         )
         self.prepared = None
-        if self.ui_state == UiState.PLAN_PRET:
-            self._set_ui_state(UiState.REPOS)
+        if self.ui_state == UiState.PLAN_READY:
+            self._set_ui_state(UiState.IDLE)
 
     def _refresh_layout_lock(self) -> None:
-        """Reflète l'organisation figée de la destination dans les options."""
+        """Reflect the destination's frozen layout in the options."""
         locked = None
         if self._dest_ok():
             try:
@@ -330,20 +333,22 @@ class MainWindow(QMainWindow):
                 locked = None
         if locked is None:
             self.layout_combo.setEnabled(True)
-            self.captures_check.setEnabled(self.layout_combo.currentData() == "date")
-            self.layout_lock_label.setText("(figée à la première synchro)")
+            self.screenshots_check.setEnabled(
+                self.layout_combo.currentData() == "date"
+            )
+            self.layout_lock_label.setText("(frozen at the first sync)")
             return
         kind = "date" if locked.startswith("date") else locked
         idx = self.layout_combo.findData(kind)
         if idx >= 0:
             self.layout_combo.setCurrentIndex(idx)
-        self.captures_check.setChecked(locked == "date+captures")
+        self.screenshots_check.setChecked(locked == "date+screenshots")
         self.config.set("layout", kind)
-        self.config.set("captures_apart", locked == "date+captures")
+        self.config.set("screenshots_apart", locked == "date+screenshots")
         self.layout_combo.setEnabled(False)
-        self.captures_check.setEnabled(False)
+        self.screenshots_check.setEnabled(False)
         self.layout_lock_label.setText(
-            f"FIGÉE pour cette destination : {label_for(locked)}"
+            f"FROZEN for this destination: {label_for(locked)}"
         )
 
     def _set_ui_state(self, state: UiState) -> None:
@@ -352,17 +357,17 @@ class MainWindow(QMainWindow):
 
     def _refresh_buttons(self) -> None:
         ready = self.device_state == DeviceState.READY
-        idle = self.ui_state in (UiState.REPOS, UiState.PLAN_PRET)
+        idle = self.ui_state in (UiState.IDLE, UiState.PLAN_READY)
         busy = not idle
         self.btn_inventory.setEnabled(ready and idle and self._dest_ok())
         self.btn_sync.setEnabled(
-            ready and self.ui_state == UiState.PLAN_PRET and self.prepared is not None
+            ready and self.ui_state == UiState.PLAN_READY and self.prepared is not None
         )
         self.btn_verify.setEnabled(ready and idle and self._dest_ok())
         self.btn_stability.setEnabled(ready and idle)
-        # Doublons : lit le manifeste local, aucun iPhone requis.
+        # Duplicates: reads the local manifest, no device required.
         self.btn_duplicates.setEnabled(idle and self._dest_ok())
-        # Albums : option à part de la sauvegarde (iPhone + destination requis).
+        # Albums: separate from the backup (device + destination required).
         self.btn_albums.setEnabled(ready and idle and self._dest_ok())
         self.btn_cancel.setEnabled(busy)
         self.dest_btn.setEnabled(idle)
@@ -370,7 +375,7 @@ class MainWindow(QMainWindow):
     def _show_error(self, message: str, details: str = "") -> None:
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Critical)
-        box.setWindowTitle("AppleSync — échec")
+        box.setWindowTitle("AppleSync — failure")
         box.setText(message)
         if details:
             box.setDetailedText(details)
@@ -383,19 +388,19 @@ class MainWindow(QMainWindow):
             with Manifest(self.config.destination) as m:
                 last = m.last_completed_run()
             if last:
-                run_id, _, finished, inv_n, inv_b, cop_n, cop_b = last
+                _run_id, _, finished, inv_n, inv_b, cop_n, cop_b = last
                 self._expected_files = inv_n or None
                 import time as _t
 
                 self.plan_label.setText(
-                    f"Dernière synchro terminée : "
+                    f"Last completed sync: "
                     f"{_t.strftime('%Y-%m-%d %H:%M', _t.localtime(finished))} — "
-                    f"inventaire {inv_n} fichiers ({fmt_bytes(inv_b or 0)}), "
-                    f"{cop_n} copiés ({fmt_bytes(cop_b or 0)}). "
-                    f"Lancez « 1. Inventorier » pour voir le delta actuel."
+                    f"inventory {inv_n} files ({fmt_bytes(inv_b or 0)}), "
+                    f"{cop_n} copied ({fmt_bytes(cop_b or 0)}). "
+                    f"Run \"1. Inventory\" to see the current delta."
                 )
         except Exception:
-            pass  # pas de manifeste : premier usage
+            pass  # no manifest yet: first use
 
     # ------------------------------------------------------------------ device
     def _on_device_state(self, state: DeviceState, udid: str) -> None:
@@ -411,11 +416,12 @@ class MainWindow(QMainWindow):
             f"QFrame {{ border: 1px solid {color}; border-left: 8px solid {color}; "
             f"border-radius: 2px; padding: 4px; }}"
         )
-        if state != DeviceState.READY and self.ui_state == UiState.PLAN_PRET:
-            # L'appareil a disparu entre l'inventaire et la validation :
-            # le plan reste affiché mais la synchro se re-préparera.
+        if state != DeviceState.READY and self.ui_state == UiState.PLAN_READY:
+            # The device vanished between inventory and validation: the plan
+            # stays on screen but the sync will have to be prepared again.
             self.statusBar().showMessage(
-                "Appareil plus disponible — rebranchez puis relancez l'inventaire."
+                "Device no longer available — plug it back in and run the "
+                "inventory again."
             )
         self._refresh_buttons()
 
@@ -423,33 +429,33 @@ class MainWindow(QMainWindow):
     def _choose_dest(self) -> None:
         start = str(self.config.destination or Path.home())
         chosen = QFileDialog.getExistingDirectory(
-            self, "Choisir le dossier de sauvegarde", start
+            self, "Choose the backup folder", start
         )
         if chosen:
             self.config.destination = Path(chosen)
             self.dest_label.setText(self._dest_text())
             self.prepared = None
-            self._set_ui_state(UiState.REPOS)
+            self._set_ui_state(UiState.IDLE)
             self._refresh_layout_lock()
             self._show_last_run_summary()
 
     def _open_reports_dir(self) -> None:
         if not self._dest_ok():
-            self._show_error("Aucune destination choisie.")
+            self._show_error("No destination chosen.")
             return
-        d = self.config.destination / ".applesync" / "rapports"
+        d = self.config.destination / ".applesync" / "reports"
         d.mkdir(parents=True, exist_ok=True)
-        os.startfile(str(d))  # noqa: S606 — ouverture Explorateur voulue
+        os.startfile(str(d))  # noqa: S606 — opening the file manager is intended
 
     # ------------------------------------------------------------------ prepare
     def _start_prepare(self) -> None:
         if not self._dest_ok():
-            self._show_error("Choisissez d'abord un dossier de destination.")
+            self._show_error("Choose a destination folder first.")
             return
         self.cancel.clear()
         self.prepared = None
-        self.plan_label.setText("Inventaire en cours…")
-        self._set_ui_state(UiState.PREPARATION)
+        self.plan_label.setText("Inventory running…")
+        self._set_ui_state(UiState.PREPARING)
         self.watcher.paused = True
         w = PrepareWorker(self._engine(), self.current_udid, self.cancel, self)
         w.phase.connect(self._on_phase)
@@ -461,21 +467,21 @@ class MainWindow(QMainWindow):
         w.start()
 
     def _on_inventory_progress(self, n: int, phase: str) -> None:
-        self.lbl_phase.setText(f"Inventaire — {phase} : {n} fichiers vus")
-        self.lbl_counts.setText(f"{n} fichiers vus")
-        # Barre calée sur le compte du dernier inventaire connu : chaque passe
-        # de la double énumération remplit une moitié. Sinon : animation.
-        attendu = self._expected_files
-        if attendu:
+        self.lbl_phase.setText(f"Inventory — {phase}: {n} files seen")
+        self.lbl_counts.setText(f"{n} files seen")
+        # Bar scaled on the last known inventory count: each pass of the double
+        # enumeration fills one half. Otherwise: busy animation.
+        expected = self._expected_files
+        if expected:
             if "1/2" in phase:
-                base, largeur = 0, 500
+                base, width = 0, 500
             elif "2/2" in phase:
-                base, largeur = 500, 500
+                base, width = 500, 500
             else:
-                base, largeur = 0, 1000
+                base, width = 0, 1000
             self.progress_bar.setRange(0, 1000)
             self.progress_bar.setValue(
-                min(1000, base + int(largeur * min(n, attendu) / attendu))
+                min(1000, base + int(width * min(n, expected) / expected))
             )
         else:
             self._bar_busy()
@@ -485,69 +491,71 @@ class MainWindow(QMainWindow):
         self._expected_files = prepared.inventory.count
         self._bar_done(True)
         inv, plan = prepared.inventory, prepared.plan
-        lignes = [
-            f"Appareil : {prepared.device_label}",
-            f"Inventaire : {inv.count} fichiers — {fmt_bytes(inv.total_bytes)} "
-            f"(double énumération concordante ✓, {fmt_duration(inv.duration_s)})",
-            f"Empreinte : {inv.fingerprint()[:20]}…",
+        lines = [
+            f"Device: {prepared.device_label}",
+            f"Inventory: {inv.count} files — {fmt_bytes(inv.total_bytes)} "
+            f"(double enumeration matched ✓, {fmt_duration(inv.duration_s)})",
+            f"Fingerprint: {inv.fingerprint()[:20]}…",
             "",
-            f"→ À copier : {len(plan.to_copy)} fichiers — "
+            f"-> To copy: {len(plan.to_copy)} files — "
             f"{fmt_bytes(sum(f.size for f in plan.to_copy))}",
-            f"→ Déjà synchronisés : {len(plan.already_synced)}",
+            f"-> Already synchronised: {len(plan.already_synced)}",
         ]
         if plan.to_adopt:
-            lignes.append(
-                f"→ Déjà sur disque, à ré-enregistrer (adoption) : {len(plan.to_adopt)}"
+            lines.append(
+                f"-> Already on disk, to be re-recorded (adoption): "
+                f"{len(plan.to_adopt)}"
             )
         if plan.conflicts:
-            lignes.append(
-                f"→ ⚠ Conflits (copiés sous nom versionné, jamais d'écrasement) : "
-                f"{len(plan.conflicts)}"
+            lines.append(
+                f"-> ⚠ Conflicts (copied under a versioned name, never an "
+                f"overwrite): {len(plan.conflicts)}"
             )
-            lignes.extend(
-                f"      {c.remote.path} → {c.versioned_path}" for c in plan.conflicts[:8]
+            lines.extend(
+                f"      {c.remote.path} -> {c.versioned_path}"
+                for c in plan.conflicts[:8]
             )
             if len(plan.conflicts) > 8:
-                lignes.append(f"      … et {len(plan.conflicts) - 8} autres")
+                lines.append(f"      … and {len(plan.conflicts) - 8} more")
         if plan.missing_on_device:
-            lignes.append(
-                f"→ Disparus de l'iPhone depuis la dernière synchro "
-                f"(CONSERVÉS sur PC) : {len(plan.missing_on_device)}"
+            lines.append(
+                f"-> Gone from the device since the last sync (KEPT on the PC): "
+                f"{len(plan.missing_on_device)}"
             )
-            lignes.extend(
+            lines.extend(
                 f"      {e.source_path}" for e in plan.missing_on_device[:8]
             )
             if len(plan.missing_on_device) > 8:
-                lignes.append(f"      … et {len(plan.missing_on_device) - 8} autres")
-        if self.config.get("layout", "miroir") == "archive":
-            lignes.append("")
-            lignes.append(
-                "Organisation archive : la date de prise de vue (EXIF) est lue "
-                "pendant la copie — chaque fichier est classé et renommé "
-                "d'après elle (mtime en repli), Live Photos vers _LivePhotos, "
-                "doublons de contenu vers _Doublons."
+                lines.append(f"      … and {len(plan.missing_on_device) - 8} more")
+        if self.config.get("layout", "mirror") == "archive":
+            lines.append("")
+            lines.append(
+                "Archive layout: the capture date (EXIF) is read during the "
+                "copy — every file is filed and renamed after it (mtime as "
+                "fallback), Live Photos go to _LivePhotos, content duplicates "
+                "to _Duplicates."
             )
         if prepared.breakdown_csv is not None:
-            lignes.append("")
-            lignes.append(
-                f"Ventilation mois × extension exportée : {prepared.breakdown_csv}"
+            lines.append("")
+            lines.append(
+                f"Month x extension breakdown exported: {prepared.breakdown_csv}"
             )
-        lignes.append("")
-        lignes.append("Validez en cliquant « 2. Synchroniser ».")
-        self.plan_label.setText("\n".join(lignes))
-        self.lbl_phase.setText("Plan prêt — en attente de validation.")
+        lines.append("")
+        lines.append("Validate by clicking \"2. Synchronise\".")
+        self.plan_label.setText("\n".join(lines))
+        self.lbl_phase.setText("Plan ready — waiting for validation.")
         self.statusBar().showMessage(
-            "Plan prêt. Validez avec « 2. Synchroniser » — rien n'a encore été écrit."
+            "Plan ready. Validate with \"2. Synchronise\" — nothing written yet."
         )
         self.watcher.paused = False
-        self._set_ui_state(UiState.PLAN_PRET)
+        self._set_ui_state(UiState.PLAN_READY)
 
     # ------------------------------------------------------------------ execute
     def _start_execute(self) -> None:
         if self.prepared is None:
             return
         self.cancel.clear()
-        self._set_ui_state(UiState.SYNCHRO)
+        self._set_ui_state(UiState.SYNCING)
         self.watcher.paused = True
         w = ExecuteWorker(self._engine(), self.prepared, self.cancel, True, self)
         w.phase.connect(self._on_phase)
@@ -559,13 +567,13 @@ class MainWindow(QMainWindow):
         self._workers.append(w)
         w.start()
 
-    # -- barre de progression : jamais figée pendant une opération -----------
-    # Convention : un changement de phase passe la barre en « activité »
-    # (animation continue) tant qu'aucun compteur n'est disponible ; dès que
-    # des chiffres arrivent, la barre devient un vrai pourcentage.
+    # -- progress bar: never frozen while something is running ---------------
+    # Convention: a phase change puts the bar in "busy" mode (continuous
+    # animation) as long as no counter is available; as soon as numbers come
+    # in, the bar becomes a real percentage.
 
     def _bar_busy(self) -> None:
-        self.progress_bar.setRange(0, 0)          # animation « en cours »
+        self.progress_bar.setRange(0, 0)          # "in progress" animation
 
     def _bar_ratio(self, i: int, n: int) -> None:
         if self.progress_bar.maximum() != 1000:
@@ -580,7 +588,7 @@ class MainWindow(QMainWindow):
     def _on_phase(self, phase: str) -> None:
         self.lbl_phase.setText(phase)
         self.statusBar().showMessage(phase)
-        if self.ui_state != UiState.REPOS:
+        if self.ui_state != UiState.IDLE:
             self._bar_busy()
 
     def _on_progress(self, s: ProgressSnapshot) -> None:
@@ -588,7 +596,7 @@ class MainWindow(QMainWindow):
             self._bar_ratio(s.bytes_done, s.bytes_total)
         self.lbl_file.setText(s.current_file or "—")
         self.lbl_counts.setText(
-            f"{s.files_done} / {s.files_total} fichiers — "
+            f"{s.files_done} / {s.files_total} files — "
             f"{fmt_bytes(s.bytes_done)} / {fmt_bytes(s.bytes_total)}"
         )
         eta = s.eta_s
@@ -598,27 +606,29 @@ class MainWindow(QMainWindow):
         )
 
     def _on_verify_progress(self, i: int, n: int, path: str) -> None:
-        """Progression d'une relecture disque (vérification, adoption)."""
+        """Progress of a disk re-read (verification, adoption)."""
         self._bar_ratio(i, n)
         self.lbl_file.setText(path or "—")
-        self.lbl_counts.setText(f"{i} / {n} fichiers relus sur le disque")
+        self.lbl_counts.setText(f"{i} / {n} files re-read from disk")
         self.lbl_speed.setText("—")
 
     def _on_report(self, report: RunReport) -> None:
         self.report_view.setMarkdown(report.to_markdown())
         self.prepared = None
         self.watcher.paused = False
-        self._bar_done(report.status == "terminé")
-        self._refresh_layout_lock()   # la 1re synchro vient de figer l'organisation
-        self._set_ui_state(UiState.REPOS)
-        titres = {"terminé": "Synchronisation terminée et vérifiée.",
-                  "interrompu": "Synchronisation interrompue — reprise possible.",
-                  "échec": "SYNCHRONISATION EN ÉCHEC — lisez le rapport."}
-        self.lbl_phase.setText(titres.get(report.status, report.status))
-        self.statusBar().showMessage(titres.get(report.status, report.status))
-        if report.status != "terminé":
+        self._bar_done(report.status == COMPLETED)
+        self._refresh_layout_lock()   # the first sync just froze the layout
+        self._set_ui_state(UiState.IDLE)
+        titles = {
+            COMPLETED: "Synchronisation completed and verified.",
+            INTERRUPTED: "Synchronisation interrupted — it can be resumed.",
+            FAILED: "SYNCHRONISATION FAILED — read the report.",
+        }
+        self.lbl_phase.setText(titles.get(report.status, report.status))
+        self.statusBar().showMessage(titles.get(report.status, report.status))
+        if report.status != COMPLETED:
             self._show_error(
-                titres.get(report.status, report.status)
+                titles.get(report.status, report.status)
                 + ("\n\n" + (report.error or "") if report.error else "")
             )
 
@@ -627,7 +637,7 @@ class MainWindow(QMainWindow):
         if not self._dest_ok():
             return
         self.cancel.clear()
-        self._set_ui_state(UiState.VERIFICATION)
+        self._set_ui_state(UiState.VERIFYING)
         self.watcher.paused = True
         self.progress_bar.setValue(0)
         w = VerifyWorker(
@@ -645,36 +655,40 @@ class MainWindow(QMainWindow):
     def _on_verify_done(self, rep: VerificationReport) -> None:
         self.watcher.paused = False
         self._bar_done(rep.ok)
-        self._set_ui_state(UiState.REPOS)
+        self._set_ui_state(UiState.IDLE)
         lines = [
-            "# Vérification de la destination",
+            "# Destination verification",
             "",
-            f"- Fichiers contrôlés : {rep.checked_count}",
-            f"- Relus et hachés : {rep.hashed_count}",
-            f"- Conformes : {rep.ok_count}",
+            f"- Files checked: {rep.checked_count}",
+            f"- Re-read and hashed: {rep.hashed_count}",
+            f"- Conforming: {rep.ok_count}",
         ]
         if rep.ok:
-            lines.append("- **Aucun écart : la destination est fidèle à l'iPhone.**")
+            lines.append(
+                "- **No discrepancy: the destination is faithful to the device.**"
+            )
         else:
-            lines.append(f"- **ÉCARTS : {len(rep.discrepancies)}**")
+            lines.append(f"- **DISCREPANCIES: {len(rep.discrepancies)}**")
             lines.extend(
-                f"  - `{d.source_path}` [{d.kind}] {d.detail}" for d in rep.discrepancies
+                f"  - `{d.source_path}` [{d.kind}] {d.detail}"
+                for d in rep.discrepancies
             )
         self.report_view.setMarkdown("\n".join(lines))
         self.lbl_phase.setText(
-            "Vérification : aucun écart." if rep.ok
-            else f"Vérification : {len(rep.discrepancies)} ÉCART(S) — voir rapport."
+            "Verification: no discrepancy." if rep.ok
+            else f"Verification: {len(rep.discrepancies)} DISCREPANCY(IES) — "
+                 f"see the report."
         )
         if not rep.ok:
             self._show_error(
-                f"{len(rep.discrepancies)} écart(s) entre l'iPhone et la destination. "
-                f"Liste nominative dans le panneau Rapport. "
-                f"NE SUPPRIMEZ RIEN sur l'iPhone."
+                f"{len(rep.discrepancies)} discrepancy(ies) between the device "
+                f"and the destination. Full list in the Report panel. "
+                f"DELETE NOTHING on the device."
             )
 
-    # ------------------------------------------------------------------ doublons
+    # ------------------------------------------------------------------ duplicates
     def _show_duplicates(self) -> None:
-        """Doublons de CONTENU (SHA-256 du manifeste). Lecture locale, rapide."""
+        """CONTENT duplicates (SHA-256 from the manifest). Local, fast."""
         if not self._dest_ok():
             return
         from applesync.core.duplicates import find_duplicates
@@ -683,30 +697,28 @@ class MainWindow(QMainWindow):
             with Manifest(self.config.destination) as m:
                 report = find_duplicates(m)
         except Exception as e:
-            self._show_error(f"Lecture du manifeste impossible : {e}")
+            self._show_error(f"Cannot read the manifest: {e}")
             return
         self.report_view.setMarkdown(report.to_markdown())
         if report.scanned_count == 0:
             self.lbl_phase.setText(
-                "Doublons : manifeste vide — lancez d'abord une synchronisation."
+                "Duplicates: empty manifest — run a synchronisation first."
             )
         elif report.groups:
-            from applesync.core.report import fmt_bytes
-
             self.lbl_phase.setText(
-                f"Doublons : {len(report.groups)} groupe(s), "
-                f"{report.duplicate_count} exemplaire(s) excédentaire(s) "
-                f"({fmt_bytes(report.wasted_bytes)}) — rien n'est supprimé."
+                f"Duplicates: {len(report.groups)} group(s), "
+                f"{report.duplicate_count} surplus copy(ies) "
+                f"({fmt_bytes(report.wasted_bytes)}) — nothing is deleted."
             )
         else:
             self.lbl_phase.setText(
-                f"Doublons : aucun (sur {report.scanned_count} fichiers hachés)."
+                f"Duplicates: none (across {report.scanned_count} hashed files)."
             )
 
     # ------------------------------------------------------------------ albums
     def _start_albums(self) -> None:
-        """Option à part de la sauvegarde : récupère les albums de l'iPhone
-        (base Photos), matérialisés en liens vers les fichiers déjà copiés."""
+        """Separate from the backup: recover the device albums (Photos
+        database) as folders of copies of the already-backed-up files."""
         if not self._dest_ok():
             return
         self.cancel.clear()
@@ -732,39 +744,39 @@ class MainWindow(QMainWindow):
         self._bar_ratio(done, total)
         self.lbl_file.setText("PhotoData/Photos.sqlite")
         self.lbl_counts.setText(
-            f"{fmt_bytes(done)} / {fmt_bytes(total)} (base Photos)"
+            f"{fmt_bytes(done)} / {fmt_bytes(total)} (Photos database)"
         )
 
     def _on_albums_mat_progress(self, i: int, n: int) -> None:
         self._bar_ratio(i, n)
         self.lbl_file.setText("—")
-        self.lbl_counts.setText(f"{i} / {n} fichiers d'albums copiés")
+        self.lbl_counts.setText(f"{i} / {n} album files copied")
 
     def _on_albums_done(self, report, report_path: str) -> None:
         self.watcher.paused = False
         self._bar_done(not report.unmatched)
-        self._set_ui_state(UiState.REPOS)
+        self._set_ui_state(UiState.IDLE)
         self.report_view.setMarkdown(report.to_markdown())
-        etat = (
-            f"Albums : {report.albums_count} dossiers, "
-            f"{report.copies_created} fichiers copiés "
+        state = (
+            f"Albums: {report.albums_count} folders, "
+            f"{report.copies_created} files copied "
             f"({fmt_bytes(report.copied_bytes)}), "
-            f"{report.favorites_count} favoris"
+            f"{report.favorites_count} favourites"
         )
         if report.unmatched:
-            etat += f" — {len(report.unmatched)} non appariés (voir rapport)"
-        self.lbl_phase.setText(etat)
-        self.statusBar().showMessage(f"Rapport albums : {report_path}")
+            state += f" — {len(report.unmatched)} unmatched (see the report)"
+        self.lbl_phase.setText(state)
+        self.statusBar().showMessage(f"Albums report: {report_path}")
 
     # ------------------------------------------------------------------ stability
     def _start_stability(self) -> None:
         self.cancel.clear()
-        self._set_ui_state(UiState.STABILITE)
+        self._set_ui_state(UiState.STABILITY)
         self.watcher.paused = True
         self.report_view.setMarkdown(
-            "# Test de stabilité en cours\n\nTrois inventaires complets vont être "
-            "réalisés. Entre chaque passe, suivez la consigne affichée dans la "
-            "barre d'état (débrancher puis rebrancher l'iPhone)."
+            "# Stability check running\n\nThree full inventories will be taken. "
+            "Between each pass, follow the instruction shown in the status bar "
+            "(unplug then plug the device back in)."
         )
         w = StabilityWorker(
             self.backend, self.current_udid, self.cancel,
@@ -781,12 +793,12 @@ class MainWindow(QMainWindow):
     def _on_stability_done(self, result: StabilityResult) -> None:
         self.watcher.paused = False
         self._bar_done(result.stable)
-        self._set_ui_state(UiState.REPOS)
-        lines = ["# Test de stabilité (critère de réussite)", ""]
+        self._set_ui_state(UiState.IDLE)
+        lines = ["# Stability check (success criterion)", ""]
         for r in result.rounds:
             lines.append(
-                f"- Passe {r.index} : {r.count} fichiers, {fmt_bytes(r.total_bytes)}, "
-                f"empreinte `{r.fingerprint[:20]}…` ({fmt_duration(r.duration_s)})"
+                f"- Pass {r.index}: {r.count} files, {fmt_bytes(r.total_bytes)}, "
+                f"fingerprint `{r.fingerprint[:20]}…` ({fmt_duration(r.duration_s)})"
             )
         lines.append("")
         lines.append("```")
@@ -794,27 +806,27 @@ class MainWindow(QMainWindow):
         lines.append("```")
         self.report_view.setMarkdown("\n".join(lines))
         self.lbl_phase.setText(
-            "Test de stabilité : STABLE ✓" if result.stable
-            else "Test de stabilité : INSTABLE — voir le rapport."
+            "Stability check: STABLE ✓" if result.stable
+            else "Stability check: UNSTABLE — see the report."
         )
 
     # ------------------------------------------------------------------ common
     def _on_worker_failed(self, message: str, details: str) -> None:
         self.watcher.paused = False
         self._bar_done(False)
-        self._set_ui_state(UiState.REPOS)
-        self.lbl_phase.setText(f"Échec : {message}")
+        self._set_ui_state(UiState.IDLE)
+        self.lbl_phase.setText(f"Failure: {message}")
         self._show_error(message, details)
 
     def _request_cancel(self) -> None:
         self.cancel.set()
-        self.lbl_phase.setText("Interruption demandée — arrêt propre en cours…")
+        self.lbl_phase.setText("Stop requested — shutting down cleanly…")
 
     def _forget_worker(self, w) -> None:
         if w in self._workers:
             self._workers.remove(w)
 
-    def closeEvent(self, event) -> None:  # noqa: N802 (API Qt)
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt API)
         self.cancel.set()
         self.watcher.stop()
         self.watcher.wait(3000)

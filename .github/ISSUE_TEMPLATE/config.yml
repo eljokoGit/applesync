@@ -1,12 +1,12 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Question d'utilisation
+  - name: Usage question
     url: https://github.com/eljokoGit/applesync/discussions
     about: >
-      Pour une question sur l'installation ou l'usage, passez par les
-      discussions plutôt que par un ticket.
-  - name: Faille de sécurité
+      For a question about installing or using AppleSync, please use
+      Discussions rather than an issue.
+  - name: Security vulnerability
     url: https://github.com/eljokoGit/applesync/security/advisories/new
     about: >
-      Signalement privé et confidentiel. N'ouvrez jamais de ticket public
-      pour une vulnérabilité.
+      Private, confidential report. Never open a public issue for a
+      vulnerability.

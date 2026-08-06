@@ -1,4 +1,4 @@
-"""Logique métier : inventaire, manifeste, plan, copie, vérification, journal.
+"""Business logic: inventory, manifest, plan, copy, verification, journal.
 
-Ne dépend que de `applesync.device.base` — jamais d'une implémentation concrète.
+Depends only on `applesync.device.base` — never on a concrete implementation.
 """

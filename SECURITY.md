@@ -1,38 +1,36 @@
-# Politique de sécurité
+# Security policy
 
-## Versions suivies
+## Supported versions
 
-| Version | Suivie |
-| ------- | ------ |
-| 1.0.x   | ✅     |
+| Version | Supported |
+| ------- | --------- |
+| 1.0.x   | ✅        |
 
-## Signaler une vulnérabilité
+## Reporting a vulnerability
 
-N'ouvrez **pas** de ticket public pour une faille de sécurité.
+Please do **not** open a public issue for a security flaw.
 
-Utilisez l'onglet **Security → Report a vulnerability** du dépôt
-(GitHub Private Vulnerability Reporting). Décrivez le problème, la version
-concernée et, si possible, la manière de le reproduire. Vous recevrez une
-réponse dès que possible ; le correctif et la divulgation seront coordonnés
-avec vous.
+Use the **Security → Report a vulnerability** tab of the repository (GitHub
+Private Vulnerability Reporting). Describe the problem, the affected version
+and, if possible, how to reproduce it. You will get an answer as soon as
+possible; the fix and the disclosure will be coordinated with you.
 
-## Périmètre
+## Scope
 
-Ce logiciel lit un appareil iOS branché en USB et écrit dans un dossier
-local. Sont particulièrement d'intérêt :
+This software reads an iOS device over USB and writes into a local folder. Of
+particular interest:
 
-- tout chemin de code qui écrirait vers l'appareil (il ne doit pas en
-  exister : le contrat d'accès appareil n'expose aucune écriture) ;
-- toute écriture hors du dossier de destination choisi, ou tout écrasement
-  d'un fichier existant de la destination ;
-- toute fuite de données personnelles hors de la machine (l'application
-  n'émet qu'une requête, anonyme et désactivable, vers l'API GitHub pour la
-  vérification de version) ;
-- toute situation où un transfert incomplet ou corrompu serait rapporté
-  comme réussi.
+- any code path that would write towards the device (none should exist: the
+  device-access contract exposes no write);
+- any write outside the chosen destination folder, or any overwrite of an
+  existing file in the destination;
+- any leak of personal data off the machine (the application only makes one
+  anonymous, disableable request to the GitHub API for the version check);
+- any situation where an incomplete or corrupted transfer would be reported as
+  a success.
 
-## Hors périmètre
+## Out of scope
 
-- Les vulnérabilités des dépendances tierces : signalez-les en amont, et
-  ouvrez ici un ticket normal pour la montée de version.
-- L'accès physique à la machine ou à l'appareil déverrouillé.
+- Vulnerabilities in third-party dependencies: report them upstream, and open
+  a normal issue here for the version bump.
+- Physical access to the machine or to an unlocked device.

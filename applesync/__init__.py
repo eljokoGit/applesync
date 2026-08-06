@@ -1,10 +1,10 @@
-"""AppleSync — synchronisation iPhone → PC via le protocole Apple (usbmuxd/AFC).
+"""AppleSync — iPhone to PC backup over the Apple protocol (usbmuxd/AFC).
 
-Sauvegarde de référence : la vérifiabilité prime sur tout.
-Un échec bruyant vaut mieux qu'un succès douteux.
+A reference backup: verifiability comes before everything else.
+A loud failure beats a doubtful success.
 """
 
-# Source unique de la version : pyproject.toml la lit ici (version dynamique),
-# et le workflow de release vérifie qu'elle correspond à l'étiquette git.
+# Single source of truth for the version: pyproject.toml reads it here
+# (dynamic version), and the release workflow checks it matches the git tag.
 __version__ = "1.0.0"
 APP_NAME = "AppleSync"

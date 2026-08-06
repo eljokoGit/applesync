@@ -1,16 +1,16 @@
-"""Vérification de la destination : relecture réelle, écarts NOMINATIFS.
+"""Destination verification: real re-read, discrepancies BY NAME.
 
-Après copie (ou à la demande), on relit la destination et on compare fichier
-par fichier à l'inventaire source, via le manifeste :
+After a copy (or on demand) the destination is read back and compared file by
+file to the source inventory, through the manifest:
 
-- pour chaque fichier de l'inventaire : le fichier local attendu existe-t-il ?
-  sa taille correspond-elle ? et, en mode approfondi, son SHA-256 relu
-  correspond-il à celui calculé pendant la copie ?
-- sortie : des LISTES DE NOMS (manquants, tailles fausses, hachages faux,
-  non couverts par le manifeste), jamais un pourcentage seul.
+- for every inventory file: does the expected local file exist? does its size
+  match? and, in deep mode, does its re-read SHA-256 match the one computed
+  during the copy?
+- output: LISTS OF NAMES (missing, wrong size, wrong hash, not covered by the
+  manifest), never a bare percentage.
 
-Le mode approfondi relit physiquement chaque octet du disque : c'est lui qui
-autorise à dire « je peux supprimer les originaux du téléphone ».
+Deep mode physically re-reads every byte from disk: that is what earns the
+right to say "I can delete the originals from the phone".
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from applesync.core.inventory import Inventory
 from applesync.core.manifest import Manifest
 from applesync.device.base import RemoteFile
 
@@ -31,7 +30,7 @@ CHUNK = 1024 * 1024
 class Discrepancy:
     source_path: str
     local_path: str
-    kind: str        # absent_du_manifeste | fichier_manquant | taille | sha256
+    kind: str        # not_in_manifest | file_missing | size | sha256
     detail: str
 
 
@@ -50,7 +49,7 @@ class VerificationReport:
         return [d.source_path for d in self.discrepancies]
 
 
-ProgressCb = Callable[[int, int, str], None]   # (n_faits, n_total, fichier_courant)
+ProgressCb = Callable[[int, int, str], None]   # (done, total, current file)
 
 
 def _sha256_of(path: Path) -> str:
@@ -72,11 +71,11 @@ def verify_against_inventory(
     progress_cb: Optional[ProgressCb] = None,
     cancel: Optional[Callable[[], bool]] = None,
 ) -> VerificationReport:
-    """Compare la destination à l'inventaire source, fichier par fichier.
+    """Compare the destination to the source inventory, file by file.
 
-    `deep_hash=True` relit chaque fichier local et compare son SHA-256 au
-    manifeste. `False` se limite à existence + taille (contrôle rapide).
-    Une interruption (`cancel`) lève : un rapport partiel n'existe pas.
+    `deep_hash=True` re-reads every local file and compares its SHA-256 to the
+    manifest. `False` checks existence and size only (quick check).
+    An interruption (`cancel`) raises: a partial report does not exist.
     """
     dest_root = Path(dest_root)
     files = list(inventory_files)
@@ -84,7 +83,7 @@ def verify_against_inventory(
 
     for i, f in enumerate(files, 1):
         if cancel is not None and cancel():
-            raise InterruptedError("vérification interrompue — aucun rapport partiel")
+            raise InterruptedError("verification interrupted — no partial report")
         if progress_cb is not None:
             progress_cb(i, len(files), f.path)
 
@@ -93,24 +92,24 @@ def verify_against_inventory(
 
         if entry is None:
             report.discrepancies.append(
-                Discrepancy(f.path, "", "absent_du_manifeste",
-                            "fichier de l'inventaire jamais enregistré comme copié")
+                Discrepancy(f.path, "", "not_in_manifest",
+                            "inventory file never recorded as copied")
             )
             continue
 
         local = dest_root / entry.local_path
         if not local.exists():
             report.discrepancies.append(
-                Discrepancy(f.path, entry.local_path, "fichier_manquant",
-                            f"attendu à {entry.local_path}, absent du disque")
+                Discrepancy(f.path, entry.local_path, "file_missing",
+                            f"expected at {entry.local_path}, absent from disk")
             )
             continue
 
         actual_size = local.stat().st_size
         if actual_size != f.size:
             report.discrepancies.append(
-                Discrepancy(f.path, entry.local_path, "taille",
-                            f"disque : {actual_size} o, source : {f.size} o")
+                Discrepancy(f.path, entry.local_path, "size",
+                            f"disk: {actual_size} B, source: {f.size} B")
             )
             continue
 
@@ -120,8 +119,8 @@ def verify_against_inventory(
             if actual_sha != entry.sha256:
                 report.discrepancies.append(
                     Discrepancy(f.path, entry.local_path, "sha256",
-                                f"disque : {actual_sha[:16]}…, "
-                                f"manifeste : {entry.sha256[:16]}…")
+                                f"disk: {actual_sha[:16]}…, "
+                                f"manifest: {entry.sha256[:16]}…")
                 )
                 continue
 

@@ -1,9 +1,9 @@
-"""Journal d'exécution : JSONL, un événement par ligne, flush immédiat.
+"""Run journal: JSONL, one event per line, flushed immediately.
 
-Objectif : pouvoir reconstituer chaque exécution après coup, y compris une
-exécution tuée en plein vol. Chaque ligne est autonome : horodatage, type
-d'événement, données. Les journaux vivent dans le dossier de destination
-(`.applesync/logs/`), avec la sauvegarde qu'ils décrivent.
+Goal: being able to reconstruct any run afterwards, including one killed
+mid-flight. Every line stands alone: timestamp, event kind, data. Journals
+live in the destination folder (`.applesync/logs/`), next to the backup they
+describe.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import json
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 def new_run_id() -> str:
@@ -46,7 +46,7 @@ class Journal:
 
 
 def read_journal(path: Path) -> list[dict]:
-    """Relit un journal. Une ligne illisible est signalée, pas ignorée."""
+    """Read a journal back. An unreadable line is reported, not skipped."""
     events = []
     with open(path, encoding="utf-8") as fh:
         for i, line in enumerate(fh, 1):
@@ -56,5 +56,5 @@ def read_journal(path: Path) -> list[dict]:
             try:
                 events.append(json.loads(line))
             except json.JSONDecodeError as e:
-                events.append({"event": "_ligne_corrompue", "ligne": i, "erreur": str(e)})
+                events.append({"event": "_corrupt_line", "line": i, "error": str(e)})
     return events

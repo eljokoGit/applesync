@@ -1,6 +1,6 @@
 name: Release
 
-# Publication déclenchée par une étiquette : git tag v1.2.0 && git push --tags
+# Publication triggered by a tag: git tag v1.2.0 && git push --tags
 on:
   push:
     tags: ["v*"]
@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 jobs:
-  verifier:
-    name: Vérifications préalables
+  checks:
+    name: Pre-flight checks
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,20 +20,20 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Installer
+      - name: Install
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
-      - name: L'étiquette correspond-elle à la version du code ?
+      - name: Does the tag match the version in the code?
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
           version=$(python -c "import applesync; print(applesync.__version__)")
           tag="${GITHUB_REF_NAME#v}"
-          echo "version du code : $version — étiquette : $tag"
+          echo "code version: $version — tag: $tag"
           if [ "$version" != "$tag" ]; then
-            echo "::error::L'étiquette $GITHUB_REF_NAME ne correspond pas à __version__ ($version)."
+            echo "::error::Tag $GITHUB_REF_NAME does not match __version__ ($version)."
             exit 1
           fi
 
@@ -42,9 +42,9 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest tests -q
 
-  paquets:
-    name: Paquets Python
-    needs: verifier
+  packages:
+    name: Python packages
+    needs: checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +53,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Construire
+      - name: Build
         run: |
           python -m pip install --upgrade pip build twine
           python -m build
@@ -61,15 +61,15 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: paquets
+          name: packages
           path: dist/
 
   executable:
-    name: Exécutable Windows
-    needs: verifier
+    name: Windows executable
+    needs: checks
     runs-on: windows-latest
-    # Au pire des cas la release sort sans exécutable : les paquets Python
-    # restent installables et la publication n'est pas bloquée.
+    # Worst case the release ships without an executable: the Python packages
+    # remain installable and publication is not blocked.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -78,7 +78,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Construire l'exécutable
+      - name: Build the executable
         run: |
           python -m pip install --upgrade pip pyinstaller
           python -m pip install .
@@ -90,42 +90,42 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: executable-windows
+          name: windows-executable
           path: dist/AppleSync.exe
 
-  publier:
-    name: Publier la release
-    needs: [paquets, executable]
-    if: always() && needs.paquets.result == 'success'
+  publish:
+    name: Publish the release
+    needs: [packages, executable]
+    if: always() && needs.packages.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
-          path: artefacts
+          path: artifacts
 
-      - name: Rassembler les fichiers
+      - name: Gather the files
         run: |
-          mkdir -p publication
-          cp artefacts/paquets/* publication/ 2>/dev/null || true
-          cp artefacts/executable-windows/* publication/ 2>/dev/null || true
-          ls -l publication
+          mkdir -p publish
+          cp artifacts/packages/* publish/ 2>/dev/null || true
+          cp artifacts/windows-executable/* publish/ 2>/dev/null || true
+          ls -l publish
 
-      - name: Créer la release
+      - name: Create the release
         uses: softprops/action-gh-release@v2
         with:
-          files: publication/*
+          files: publish/*
           generate_release_notes: true
           body: |
-            Voir [CHANGELOG.md](https://github.com/eljokoGit/applesync/blob/main/CHANGELOG.md)
-            pour le détail des changements.
+            See [CHANGELOG.md](https://github.com/eljokoGit/applesync/blob/main/CHANGELOG.md)
+            for the detailed list of changes.
 
             **Installation**
 
-            - Windows, sans Python : télécharger `AppleSync.exe` ci-dessous
-              (s'il est présent), puis double-cliquer.
-            - Avec Python 3.12+ : `pip install applesync-<version>-py3-none-any.whl`
+            - Windows, without Python: download `AppleSync.exe` below (when
+              present) and double-click it.
+            - With Python 3.12+: `pip install applesync-<version>-py3-none-any.whl`
 
-            Rappel : le pilote Apple (iTunes, application Apple Devices ou
-            pilotes CopyTrans) doit être installé pour que l'iPhone soit vu.
+            Reminder: the Apple driver (iTunes, the Apple Devices app or the
+            CopyTrans drivers) must be installed for the device to be seen.

@@ -1,14 +1,13 @@
-"""Lecture de la date de prise de vue EXIF d'un fichier LOCAL.
+"""Reading the EXIF capture date of a LOCAL file.
 
-Utilisé par l'organisation « archive » APRÈS la copie (le fichier est alors
-sur disque : lecture d'en-tête, coût négligeable). Jamais utilisé pour
-l'identité incrémentale, qui reste (chemin, taille, mtime) — décision § 4.
+Used by the "archive" layout AFTER the copy (the file is on disk by then: a
+header read, negligible cost). Never used for incremental identity, which
+remains (path, size, mtime).
 
-Pillow lit l'EXIF des JPEG nativement ; pour les HEIC il échoue proprement
-(pas de décodeur) et on retombe sur le mtime — sans gravité : les HEIC sont
-les photos prises par l'iPhone lui-même, dont le mtime est fiable. Le
-problème que résout ce module, ce sont les JPG anciens dont le mtime est une
-date d'import en masse.
+Pillow reads JPEG EXIF natively; for HEIC it fails cleanly (no decoder) and we
+fall back to mtime — harmless, since HEIC files are the photos taken by the
+device itself, whose mtime is reliable. The problem this module solves is old
+JPGs whose mtime is a bulk-import date rather than a capture date.
 """
 
 from __future__ import annotations
@@ -17,16 +16,16 @@ import time
 from pathlib import Path
 from typing import Optional
 
-_DATETIME_ORIGINAL = 36867      # Exif IFD : DateTimeOriginal
-_DATETIME = 306                 # IFD0 : DateTime (repli)
+_DATETIME_ORIGINAL = 36867      # Exif IFD: DateTimeOriginal
+_DATETIME = 306                 # IFD0: DateTime (fallback)
 _EXIF_IFD = 0x8769
 
 
 def exif_timestamp(path: Path) -> Optional[int]:
-    """Epoch (heure locale) de la prise de vue EXIF, ou None si introuvable.
+    """Local-time epoch of the EXIF capture date, or None if not found.
 
-    Ne lève jamais : tout échec (format illisible, EXIF absent, date
-    aberrante) rend None et le mtime prendra le relais.
+    Never raises: any failure (unreadable format, no EXIF, absurd date)
+    returns None and mtime takes over.
     """
     try:
         from PIL import Image

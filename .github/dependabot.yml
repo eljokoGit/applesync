@@ -6,9 +6,9 @@ updates:
       interval: monthly
     open-pull-requests-limit: 5
     labels: ["dependencies"]
-    # pymobiledevice3 est volontairement figé : le positionnement dans un
-    # fichier (reprise de copie) passe par une API interne. Toute montée de
-    # version doit être validée à la main contre un appareil réel.
+    # pymobiledevice3 is deliberately pinned: seeking inside a file (copy
+    # resume) goes through an internal API. Any version bump must be validated
+    # by hand against a real device.
     ignore:
       - dependency-name: pymobiledevice3
 

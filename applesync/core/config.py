@@ -1,6 +1,7 @@
-"""Configuration locale : destination mémorisée, préférences UI.
+"""Local configuration: remembered destination, UI preferences.
 
-Vit dans %LOCALAPPDATA%/AppleSync/config.json (hors dépôt, hors destination).
+Lives in %LOCALAPPDATA%/AppleSync/config.json (outside the repository and
+outside the destination).
 """
 
 from __future__ import annotations
@@ -24,8 +25,8 @@ class Config:
             try:
                 self._data = json.loads(self.path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
-                # Config illisible : on repart proprement mais on garde une trace.
-                corrupt = self.path.with_suffix(".corrompu.json")
+                # Unreadable config: start clean, but keep the evidence.
+                corrupt = self.path.with_suffix(".corrupt.json")
                 try:
                     self.path.replace(corrupt)
                 except OSError:

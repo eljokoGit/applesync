@@ -1,4 +1,4 @@
-"""Inventaire : la troncature silencieuse et la déconnexion doivent être bruyantes."""
+"""Inventory: silent truncation and disconnections must be loud."""
 
 import pytest
 
@@ -11,7 +11,7 @@ from applesync.device.base import DeviceDisconnectedError, DeviceLockedError
 from applesync.device.simulator import FaultPlan, SimProfile, SimulatedBackend
 
 
-def test_inventaire_sain(backend):
+def test_healthy_inventory(backend):
     with backend.connect(backend.INFO.udid) as s:
         inv = take_inventory(s)
     assert inv.count == len(backend.tree)
@@ -19,7 +19,7 @@ def test_inventaire_sain(backend):
     assert inv.double_checked
 
 
-def test_empreinte_stable(backend):
+def test_fingerprint_is_stable(backend):
     with backend.connect(backend.INFO.udid) as s:
         a = take_inventory(s)
     with backend.connect(backend.INFO.udid) as s:
@@ -27,22 +27,22 @@ def test_empreinte_stable(backend):
     assert a.fingerprint() == b.fingerprint()
 
 
-def test_troncature_silencieuse_detectee():
-    """LE test central : le défaut MTP (des fichiers omis sans erreur) est
-    détecté par la double énumération et nommé, jamais absorbé."""
+def test_silent_truncation_is_detected():
+    """THE central test: the MTP defect (files dropped without any error) is
+    caught by the double enumeration and named, never absorbed."""
     faults = FaultPlan(truncate_on_walk_index=2, truncate_drop_count=30)
     backend = SimulatedBackend(SimProfile.small(), faults)
     with backend.connect(backend.INFO.udid) as s:
         with pytest.raises(InventoryMismatchError) as exc:
             take_inventory(s)
     err = exc.value
-    # Les fichiers omis à la 2e passe sont nommés, exactement 30
+    # The files dropped in pass 2 are named, exactly 30 of them
     assert len(err.only_first) == 30
     assert len(err.only_second) == 0
     assert all("/" in p for p in err.only_first)
 
 
-def test_troncature_premiere_passe_detectee():
+def test_truncation_on_the_first_pass_is_detected():
     faults = FaultPlan(truncate_on_walk_index=1, truncate_drop_count=12)
     backend = SimulatedBackend(SimProfile.small(), faults)
     with backend.connect(backend.INFO.udid) as s:
@@ -51,7 +51,7 @@ def test_troncature_premiere_passe_detectee():
     assert len(exc.value.only_second) == 12
 
 
-def test_deconnexion_en_cours_denumeration():
+def test_disconnection_during_enumeration():
     faults = FaultPlan(disconnect_after_entries=40)
     backend = SimulatedBackend(SimProfile.small(), faults)
     with backend.connect(backend.INFO.udid) as s:
@@ -59,13 +59,13 @@ def test_deconnexion_en_cours_denumeration():
             take_inventory(s)
 
 
-def test_appareil_verrouille_bloque_la_connexion():
+def test_locked_device_blocks_the_connection():
     backend = SimulatedBackend(SimProfile.small(), FaultPlan(locked=True))
     with pytest.raises(DeviceLockedError):
         backend.connect(backend.INFO.udid)
 
 
-def test_annulation_pendant_inventaire(backend):
+def test_cancelling_during_the_inventory(backend):
     calls = {"n": 0}
 
     def cancel() -> bool:

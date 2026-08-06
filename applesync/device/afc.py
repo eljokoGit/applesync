@@ -1,18 +1,19 @@
-"""Backend réel : iPhone via usbmuxd + lockdown + AFC (pymobiledevice3).
+"""Real backend: iPhone over usbmuxd + lockdown + AFC (pymobiledevice3).
 
-pymobiledevice3 ≥ 10 est entièrement asynchrone ; ce module l'enveloppe dans
-une façade synchrone (boucle asyncio dédiée dans un thread) pour respecter le
-contrat `DeviceBackend`/`DeviceSession`, synchrone par conception.
+pymobiledevice3 >= 10 is fully asynchronous; this module wraps it in a
+synchronous facade (a dedicated asyncio loop in its own thread) so it can
+honour the `DeviceBackend`/`DeviceSession` contract, which is synchronous by
+design.
 
-Points notables :
-- Traduction systématique des exceptions pymobiledevice3 vers la hiérarchie
-  `DeviceError` : la logique métier ne voit jamais une exception étrangère.
-- `FILE_SEEK` n'est plus exposé par pymobiledevice3 10.x ; on construit le
-  paquet nous-mêmes (handle u64, whence u64, offset i64 — format vérifié dans
-  libimobiledevice, implémentation C de référence) et on VÉRIFIE la position
-  obtenue via `FILE_TELL` avant de reprendre une copie. Une reprise à la
-  mauvaise position produirait un fichier corrompu : on préfère échouer.
-- Aucune méthode d'écriture/suppression vers l'appareil n'est exposée.
+Notable points:
+- Every pymobiledevice3 exception is translated into the `DeviceError`
+  hierarchy: business logic never sees a foreign exception.
+- `FILE_SEEK` is no longer exposed by pymobiledevice3 10.x, so we build the
+  packet ourselves (handle u64, whence u64, offset i64 — layout taken from
+  libimobiledevice, the reference C implementation) and VERIFY the resulting
+  position with `FILE_TELL` before resuming a copy. Resuming at the wrong
+  offset would produce a corrupt file, so we would rather fail.
+- No write or delete method towards the device is exposed.
 """
 
 from __future__ import annotations
@@ -47,78 +48,77 @@ from .base import (
 )
 
 DCIM_ROOT = "/DCIM"
-# Racines supplémentaires couvertes par la sauvegarde, au-delà du DCIM :
-# des photos de la bibliothèque peuvent vivre hors DCIM — originaux gérés par
-# les fonctions iCloud (CPLAssets) et éléments d'albums partagés iCloud
-# (PhotoCloudSharingData). Le préfixe d'inventaire = le nom du dossier sous
-# /PhotoData, ce qui rend la résolution de chemin triviale.
+# Extra roots covered by the backup, beyond DCIM: some library photos live
+# outside DCIM — originals managed by the iCloud features (CPLAssets) and
+# items of iCloud shared albums (PhotoCloudSharingData). The inventory prefix
+# is the folder name under /PhotoData, which keeps path resolution trivial.
 PHOTODATA_ROOTS = ("CPLAssets", "PhotoCloudSharingData")
-CPL_PREFIX = "CPLAssets/"                      # compat tests/documentation
+CPL_PREFIX = "CPLAssets/"
 SHARED_PREFIX = "PhotoCloudSharingData/"
-OP_TIMEOUT_S = 120           # une opération AFC individuelle
+OP_TIMEOUT_S = 120           # a single AFC operation
 CONNECT_TIMEOUT_S = 30
-PAIR_TIMEOUT_S = 5           # au-delà : « touchez Se fier » affiché à l'utilisateur
-STAT_CONCURRENCY = 8         # stats parallèles pendant l'énumération
+PAIR_TIMEOUT_S = 5           # beyond that, the UI tells the user to tap "Trust"
+STAT_CONCURRENCY = 8         # parallel stats during enumeration
 
 _fseek_req = Struct("handle" / Int64ul, "whence" / Int64ul, "offset" / Int64sl)
 _ftell_req = Struct("handle" / Int64ul)
 
 
 # ---------------------------------------------------------------------------
-# Traduction des exceptions
+# Exception translation
 # ---------------------------------------------------------------------------
 
 def _translate(e: BaseException) -> DeviceError:
-    """Convertit une exception pymobiledevice3/réseau en DeviceError."""
+    """Turn a pymobiledevice3 / network exception into a DeviceError."""
     if isinstance(e, DeviceError):
         return e
     if isinstance(e, (pmd3_exc.PasswordRequiredError, pmd3_exc.PasscodeRequiredError)):
         return DeviceLockedError(
-            "iPhone verrouillé — déverrouillez l'écran puis réessayez."
+            "iPhone locked — unlock the screen and try again."
         )
     if isinstance(e, (pmd3_exc.PairingDialogResponsePendingError,)):
         return DeviceUntrustedError(
-            "En attente d'appairage — déverrouillez l'iPhone et touchez "
-            "« Se fier à cet ordinateur »."
+            "Waiting for pairing — unlock the iPhone and tap "
+            "\"Trust This Computer\"."
         )
     if isinstance(e, (pmd3_exc.UserDeniedPairingError,)):
         return DeviceUntrustedError(
-            "Appairage refusé sur l'iPhone. Débranchez, rebranchez, puis "
-            "acceptez « Se fier à cet ordinateur »."
+            "Pairing refused on the iPhone. Unplug, plug back in, then accept "
+            "\"Trust This Computer\"."
         )
     if isinstance(e, (pmd3_exc.NotPairedError, pmd3_exc.InvalidHostIDError,
                       pmd3_exc.PairingError, pmd3_exc.FatalPairingError,
                       pmd3_exc.NotTrustedError)):
         return DeviceUntrustedError(
-            "Appareil non appairé avec ce PC — acceptez « Se fier » sur l'iPhone."
+            "Device not paired with this PC — tap \"Trust\" on the iPhone."
         )
     if isinstance(e, (pmd3_exc.NoDeviceConnectedError, pmd3_exc.DeviceNotFoundError)):
-        return DeviceAbsentError("Aucun iPhone détecté sur ce port USB.")
+        return DeviceAbsentError("No iPhone detected on this USB port.")
     if isinstance(e, pmd3_exc.ConnectionFailedToUsbmuxdError):
         return UsbmuxdUnavailableError(
-            "usbmuxd injoignable sur 127.0.0.1:27015 — installez iTunes "
-            "(Apple Mobile Device Support) ou les pilotes CopyTrans, ou "
-            "démarrez le service s'il est arrêté."
+            "usbmuxd unreachable on 127.0.0.1:27015 — install iTunes "
+            "(Apple Mobile Device Support), the Apple Devices app or the "
+            "CopyTrans drivers, or start the service if it is stopped."
         )
     if isinstance(e, (pmd3_exc.ConnectionTerminatedError, pmd3_exc.StreamClosedError,
                       pmd3_exc.ConnectionFailedError, pmd3_exc.MuxException,
                       ConnectionError, EOFError, OSError, asyncio.IncompleteReadError)):
         return DeviceDisconnectedError(
-            f"Session appareil interrompue ({type(e).__name__}: {e}). "
-            f"Écran verrouillé ou câble débranché ?"
+            f"Device session interrupted ({type(e).__name__}: {e}). "
+            f"Screen locked or cable unplugged?"
         )
     if isinstance(e, pmd3_exc.StartServiceError):
         msg = str(e)
         if "PasswordProtected" in msg or "Password" in msg:
             return DeviceLockedError(
-                "iPhone verrouillé — déverrouillez l'écran puis réessayez."
+                "iPhone locked — unlock the screen and try again."
             )
-        return DeviceError(f"Service AFC indisponible : {msg}")
+        return DeviceError(f"AFC service unavailable: {msg}")
     return DeviceError(f"{type(e).__name__}: {e}")
 
 
 # ---------------------------------------------------------------------------
-# Boucle asyncio dédiée (façade synchrone)
+# Dedicated asyncio loop (synchronous facade)
 # ---------------------------------------------------------------------------
 
 class _LoopThread:
@@ -140,8 +140,8 @@ class _LoopThread:
         except concurrent.futures.TimeoutError:
             fut.cancel()
             raise DeviceDisconnectedError(
-                f"Opération sans réponse après {timeout:.0f} s — câble débranché "
-                f"ou iPhone verrouillé ?"
+                f"No answer after {timeout:.0f} s — cable unplugged or iPhone "
+                f"locked?"
             ) from None
         except BaseException as e:
             raise _translate(e) from e
@@ -152,7 +152,7 @@ class _LoopThread:
 
 
 # ---------------------------------------------------------------------------
-# Lecteur de fichier
+# File reader
 # ---------------------------------------------------------------------------
 
 class AfcFileReader(RemoteFileReader):
@@ -165,7 +165,7 @@ class AfcFileReader(RemoteFileReader):
         self._closed = False
 
     def seek(self, offset: int) -> None:
-        """FILE_SEEK construit à la main + position vérifiée par FILE_TELL."""
+        """Hand-built FILE_SEEK, then position verified with FILE_TELL."""
         afc = self._session._afc
         loop = self._session._loop
 
@@ -175,12 +175,12 @@ class AfcFileReader(RemoteFileReader):
                 _fseek_req.build({"handle": self._handle, "whence": 0, "offset": offset}),
             )
             if status != AfcError.SUCCESS:
-                raise FileReadError(self._path, offset, f"seek refusé ({status})")
+                raise FileReadError(self._path, offset, f"seek refused ({status})")
             status, data = await afc._send_and_wait(
                 AfcOpcode.FILE_TELL, _ftell_req.build({"handle": self._handle})
             )
             if status != AfcError.SUCCESS or len(data) < 8:
-                raise FileReadError(self._path, offset, f"tell refusé ({status})")
+                raise FileReadError(self._path, offset, f"tell refused ({status})")
             return int.from_bytes(data[:8], "little")
 
         pos = loop.call(_seek_and_verify())
@@ -188,13 +188,13 @@ class AfcFileReader(RemoteFileReader):
             raise FileReadError(
                 self._path,
                 offset,
-                f"position après seek : {pos} ≠ {offset} attendu — reprise refusée",
+                f"position after seek: {pos} != {offset} expected — resume refused",
             )
         self._pos = offset
 
     def read(self, size: int) -> bytes:
         if self._closed:
-            raise FileReadError(self._path, self._pos, "lecteur fermé")
+            raise FileReadError(self._path, self._pos, "reader closed")
         want = min(size, self._size - self._pos)
         if want <= 0:
             return b""
@@ -205,7 +205,7 @@ class AfcFileReader(RemoteFileReader):
         except DeviceDisconnectedError:
             raise
         except DeviceError as e:
-            # Erreur AFC localisée (READ_ERROR…) : contexte exact pour le rapport.
+            # Localised AFC error (READ_ERROR…): exact context for the report.
             raise FileReadError(self._path, self._pos, str(e)) from e
         self._pos += len(data)
         return data
@@ -219,7 +219,7 @@ class AfcFileReader(RemoteFileReader):
                 self._session._afc.fclose(self._handle), timeout=15
             )
         except DeviceError:
-            pass  # session probablement tombée ; le handle meurt avec elle
+            pass  # session probably gone; the handle dies with it
 
 
 # ---------------------------------------------------------------------------
@@ -257,9 +257,9 @@ class AfcDeviceSession(DeviceSession):
     async def _walk_async(self):
         async for f in self._walk_root(DCIM_ROOT, ""):
             yield f
-        # Zones PhotoData : couvertes si elles existent sur l'appareil.
-        # Une absence AFC franche = pas de zone ; une déconnexion, elle,
-        # remonte comme telle (traduite à la frontière de la façade).
+        # PhotoData zones: covered when they exist on the device. A clean AFC
+        # "not found" means the zone is absent; a disconnection, on the other
+        # hand, surfaces as such (translated at the facade boundary).
         for name in PHOTODATA_ROOTS:
             root = f"/PhotoData/{name}"
             try:
@@ -294,13 +294,13 @@ class AfcDeviceSession(DeviceSession):
                     yield self._to_remote_file(
                         prefix + posixpath.relpath(full, root), st
                     )
-                # Liens symboliques et autres : ignorés — inexistants dans un
-                # DCIM iOS ; s'ils apparaissent, l'écart sortira au rapport
-                # de vérification (absent_du_manifeste n'arrive jamais ici).
+                # Symlinks and anything else are skipped — they do not exist in
+                # an iOS photo library; should any appear, the verification
+                # report would name them rather than hide them.
 
     @staticmethod
     def _resolve(path: str) -> str:
-        """Chemin AFC complet d'un chemin d'inventaire (DCIM ou zone PhotoData)."""
+        """Full AFC path for an inventory path (DCIM or a PhotoData zone)."""
         if any(path.startswith(name + "/") for name in PHOTODATA_ROOTS):
             return "/PhotoData/" + path
         return posixpath.join(DCIM_ROOT, path)
@@ -309,7 +309,7 @@ class AfcDeviceSession(DeviceSession):
     def _to_remote_file(rel: str, st: dict) -> RemoteFile:
         mtime = st.get("st_mtime")
         birthtime = st.get("st_birthtime")
-        # pymobiledevice3 10.x convertit en datetime ; on fige en secondes epoch.
+        # pymobiledevice3 10.x returns datetimes; freeze them to epoch seconds.
         mtime_s = int(mtime.timestamp()) if hasattr(mtime, "timestamp") else int(mtime)
         birth_s = (
             int(birthtime.timestamp())
@@ -326,7 +326,7 @@ class AfcDeviceSession(DeviceSession):
         except DeviceError:
             raise
         except pmd3_exc.AfcException as e:
-            raise FileReadError(path, 0, f"stat impossible : {e}") from e
+            raise FileReadError(path, 0, f"stat failed: {e}") from e
         return self._to_remote_file(path, st)
 
     def open_file(self, path: str) -> RemoteFileReader:
@@ -334,7 +334,7 @@ class AfcDeviceSession(DeviceSession):
         handle = self._loop.call(self._afc.fopen(self._resolve(path), "r"))
         return AfcFileReader(self, path, handle, remote.size)
 
-    # -- jail Media hors DCIM (lecture seule) : base Photos.sqlite -----------
+    # -- Media jail outside DCIM (read-only): the Photos database ------------
 
     def stat_media(self, path: str) -> int:
         try:
@@ -370,7 +370,7 @@ class AfcDeviceSession(DeviceSession):
 # ---------------------------------------------------------------------------
 
 class AfcBackend(DeviceBackend):
-    """Accès à l'iPhone réel. Une seule instance par application."""
+    """Access to a real iPhone. One instance per application."""
 
     def __init__(self, usbmux_address: Optional[str] = None):
         self._usbmux_address = usbmux_address
@@ -390,7 +390,7 @@ class AfcBackend(DeviceBackend):
                 self._loop.shutdown()
                 self._loop = None
 
-    # -- contrat -------------------------------------------------------------
+    # -- contract ------------------------------------------------------------
 
     def list_devices(self) -> list[DeviceInfo]:
         try:
@@ -453,8 +453,9 @@ class AfcBackend(DeviceBackend):
                 )
                 afc = AfcService(lockdown)
                 await afc.connect()
-                # DCIM accessible ? (verrouillé → souvent service refusé avant,
-                # mais on vérifie : jamais d'inventaire sur un DCIM absent)
+                # Is DCIM reachable? (When locked the service is usually
+                # refused earlier, but we check: never inventory a missing
+                # DCIM.)
                 await afc.stat(DCIM_ROOT)
                 return lockdown, afc, info
             except BaseException:

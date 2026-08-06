@@ -1,21 +1,20 @@
-## Objet
+## What this changes
 
-<!-- Que change cette pull request, et pourquoi ? -->
+<!-- What does this pull request change, and why? -->
 
-Ticket lié : #
+Related issue: #
 
-## Vérifications
+## Checklist
 
-- [ ] `pytest` passe intégralement en local
-- [ ] Les nouveautés sont couvertes par des tests sur le simulateur,
-      y compris leur comportement en cas de panne
-- [ ] Aucune écriture ni suppression vers l'iPhone n'a été introduite
-- [ ] Aucun fichier de la destination n'est écrasé ni supprimé
-- [ ] Les erreurs sont explicites et nominatives (pas de résultat partiel
-      silencieux)
-- [ ] Toute opération longue affiche sa progression
-- [ ] `CHANGELOG.md` mis à jour sous « Non publié »
+- [ ] `pytest` passes in full locally
+- [ ] New behaviour is covered by simulator tests, including how it behaves
+      when a fault is injected
+- [ ] No write or deletion towards the device was introduced
+- [ ] No file of the destination is overwritten or deleted
+- [ ] Errors are explicit and name what is affected (no silent partial result)
+- [ ] Every long operation shows progress
+- [ ] `CHANGELOG.md` updated under "Unreleased"
 
-## Notes pour la relecture
+## Notes for the reviewer
 
-<!-- Points d'attention, compromis assumés, ce qui reste à faire. -->
+<!-- Points of attention, deliberate trade-offs, what is left to do. -->

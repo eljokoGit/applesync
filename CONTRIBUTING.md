@@ -1,25 +1,25 @@
-# Contribuer à AppleSync
+# Contributing to AppleSync
 
-Merci de l'intérêt porté au projet. Les contributions sont bienvenues :
-signalements de bugs, propositions, corrections, traductions.
+Thanks for your interest in the project. Contributions are welcome: bug
+reports, suggestions, fixes, documentation.
 
-## Signaler un bug
+## Reporting a bug
 
-Ouvrez un [ticket](https://github.com/eljokoGit/applesync/issues) en
-utilisant le modèle « Rapport de bug ». Les éléments les plus utiles :
+Open an [issue](https://github.com/eljokoGit/applesync/issues) using the "Bug
+report" template. The most useful details:
 
-- la version d'AppleSync (affichée dans la barre d'état), de Windows, d'iOS
-  et le modèle d'iPhone ;
-- ce que vous attendiez, ce qui s'est produit ;
-- le message d'erreur complet (bouton « Détails » de la fenêtre d'erreur) ;
-- si possible un extrait du journal, dans
+- the AppleSync version (shown in the status bar), your Windows version, the
+  iOS version and the device model;
+- what you expected, and what happened instead;
+- the full error message ("Details" button of the error dialog);
+- if possible an excerpt of the journal, in
   `<destination>/.applesync/logs/run_*.jsonl`.
 
-**Ne joignez jamais de photo ni le fichier `manifest.sqlite3`** : le journal
-et les rapports contiennent des noms de fichiers, ce qui suffit presque
-toujours au diagnostic.
+**Never attach a photo or the `manifest.sqlite3` file.** The journal and the
+reports contain file names, which is almost always enough to diagnose — read
+them over before posting.
 
-## Environnement de développement
+## Development environment
 
 ```
 git clone https://github.com/eljokoGit/applesync.git
@@ -29,52 +29,49 @@ python -m venv .venv
 .venv\Scripts\python -m pytest tests -q
 ```
 
-Aucun iPhone n'est nécessaire : toute la logique se teste sur le simulateur
-d'appareil (`applesync/device/simulator.py`), qui produit un arbre de
-fichiers déterministe et sait injecter les pannes du terrain.
+No device is required: all the logic is tested against the device simulator
+(`applesync/device/simulator.py`), which produces a deterministic file tree
+and can inject the faults that happen in the field.
 
-Parcours complet de l'interface, sans matériel :
+Full UI walkthrough, still without hardware:
 
 ```
-.venv\Scripts\python scripts\ui_smoke.py <dossier_de_captures>
+.venv\Scripts\python scripts\ui_smoke.py <screenshot_dir>
 ```
 
-## Règles du projet
+## Project rules
 
-Ces règles ne sont pas négociables — elles définissent ce qu'est ce logiciel.
+These are not negotiable — they define what this software is.
 
-1. **Aucune écriture vers l'appareil.** Le contrat `DeviceSession`
-   (`applesync/device/base.py`) ne comporte aucune méthode d'écriture ou de
-   suppression. Une contribution qui en ajouterait une serait refusée.
-2. **Aucune donnée n'est écrasée ni supprimée dans la destination.** Les
-   conflits sont résolus par un nom versionné (`.~2`), jamais par
-   remplacement.
-3. **Échec bruyant.** Un résultat partiel ne doit jamais passer pour
-   complet : on lève une exception explicite plutôt que de rendre un objet
-   incomplet, et les écarts sont listés par nom, pas résumés en pourcentage.
-4. **Toute nouveauté est testée sur le simulateur**, y compris son
-   comportement en cas de panne.
-5. **Toute opération longue montre sa progression** (barre animée dès le
-   démarrage d'une phase, pourcentage dès qu'un compteur existe).
+1. **No write towards the device.** The `DeviceSession` contract
+   (`applesync/device/base.py`) exposes no write or delete method. A
+   contribution adding one would be declined.
+2. **Nothing in the destination is overwritten or deleted.** Conflicts resolve
+   to a versioned name (`.~2`), never to a replacement.
+3. **Fail loudly.** A partial result must never pass for a complete one: raise
+   an explicit exception rather than returning an incomplete object, and list
+   discrepancies by name rather than summarising them as a percentage.
+4. **Every new behaviour is tested on the simulator**, including how it
+   behaves when a fault is injected.
+5. **Every long operation shows progress** (busy animation as soon as a phase
+   starts, real percentage as soon as a counter exists).
 
 ## Style
 
-- Python 3.12, bibliothèque standard privilégiée.
-- Code, commentaires, messages d'interface et documentation en français ;
-  les identifiants restent en anglais quand c'est l'usage.
-- Les commentaires expliquent le *pourquoi*, pas le *comment*.
+- Python 3.12, standard library preferred.
+- Code, comments, UI strings and documentation in English.
+- Comments explain the *why*, not the *how*.
 
 ## Pull requests
 
-- Une intention par pull request.
-- `pytest` doit passer intégralement ; l'intégration continue le vérifie sur
-  Windows et Linux.
-- Ajoutez une entrée dans `CHANGELOG.md` sous « Non publié ».
+- One intent per pull request.
+- `pytest` must pass in full; CI checks it on Windows and Linux.
+- Add an entry to `CHANGELOG.md` under "Unreleased".
 
-## Publier une version (mainteneurs)
+## Cutting a release (maintainers)
 
-1. Mettre à jour `__version__` dans `applesync/__init__.py` et la section
-   correspondante de `CHANGELOG.md`.
-2. Committer, puis étiqueter : `git tag v1.2.0 && git push --tags`.
-3. Le workflow de publication vérifie que l'étiquette correspond à la
-   version du code, construit les paquets et crée la release GitHub.
+1. Update `__version__` in `applesync/__init__.py` and the matching section of
+   `CHANGELOG.md`.
+2. Commit, then tag: `git tag v1.2.0 && git push --tags`.
+3. The release workflow checks that the tag matches the version in the code,
+   builds the packages and creates the GitHub release.

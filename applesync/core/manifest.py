@@ -1,11 +1,11 @@
-"""Manifeste : base SQLite des fichiers déjà rapatriés.
+"""Manifest: the SQLite record of everything already copied.
 
-Vit DANS le dossier de destination (`.applesync/manifest.sqlite3`) : la
-sauvegarde est autoportante, le manifeste voyage avec elle.
+It lives INSIDE the destination folder (`.applesync/manifest.sqlite3`), so the
+backup is self-contained: the manifest travels with it.
 
-Identité d'un fichier source : (source_path, size, mtime) — voir DECISIONS.md.
-Chaque entrée porte aussi le SHA-256 calculé pendant la copie : c'est la
-référence pour la vérification de la destination.
+Source-file identity: (source_path, size, mtime). Every entry also carries the
+SHA-256 computed during the copy — the reference used when verifying the
+destination.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ class ManifestEntry:
 
 
 class Manifest:
-    """Accès au manifeste. Une connexion par instance, WAL, écritures durables."""
+    """Manifest access. One connection per instance, WAL, durable writes."""
 
     DB_RELPATH = Path(".applesync") / "manifest.sqlite3"
 
@@ -94,7 +94,7 @@ class Manifest:
     def __exit__(self, *exc) -> None:
         self.close()
 
-    # -- fichiers ------------------------------------------------------------
+    # -- files ---------------------------------------------------------------
 
     def record_file(
         self,
@@ -104,8 +104,8 @@ class Manifest:
         run_id: str,
         device_udid: str,
     ) -> None:
-        """Enregistre un fichier copié ET vérifié. Commit immédiat : si le
-        processus meurt juste après, le manifeste reste cohérent."""
+        """Record a copied AND checked file. Committed immediately: if the
+        process dies right after, the manifest stays consistent."""
         self._con.execute(
             "INSERT OR REPLACE INTO files "
             "(source_path, size, mtime, birthtime, sha256, local_path,"
@@ -125,11 +125,10 @@ class Manifest:
         return ManifestEntry(*row) if row else None
 
     def lookup_by_content(self, sha256: str, size: int) -> Optional[ManifestEntry]:
-        """Première entrée au même contenu (hachage + taille), ou None.
+        """First entry with the same content (hash + size), or None.
 
-        Sert au rangement des doublons pendant la copie : si le contenu
-        fraîchement copié existe déjà quelque part, le nouvel exemplaire est
-        un doublon."""
+        Used to file duplicates away during the copy: if the freshly copied
+        content already exists somewhere, the new copy is a duplicate."""
         row = self._con.execute(
             "SELECT source_path, size, mtime, birthtime, sha256, local_path,"
             " synced_at, run_id, device_udid FROM files"
@@ -157,7 +156,7 @@ class Manifest:
         rows = self._con.execute("SELECT local_path FROM files").fetchall()
         return {r[0] for r in rows}
 
-    # -- métadonnées de la destination ----------------------------------------
+    # -- destination metadata ------------------------------------------------
 
     def get_meta(self, key: str) -> Optional[str]:
         row = self._con.execute(
@@ -172,18 +171,18 @@ class Manifest:
         self._con.commit()
 
     def locked_layout(self) -> Optional[str]:
-        """Organisation figée de cette destination, ou None si vierge.
+        """The layout frozen for this destination, or None if pristine.
 
-        Un manifeste peuplé antérieur à l'option d'organisation est,
-        par construction, en disposition miroir."""
+        A populated manifest predating the layout option is, by construction,
+        a mirror layout."""
         locked = self.get_meta("layout")
         if locked is None and self._con.execute(
             "SELECT 1 FROM files LIMIT 1"
         ).fetchone():
-            return "miroir"
+            return "mirror"
         return locked
 
-    # -- exécutions ------------------------------------------------------------
+    # -- runs ----------------------------------------------------------------
 
     def start_run(self, run_id: str, device_udid: str) -> None:
         self._con.execute(
@@ -200,7 +199,7 @@ class Manifest:
         }
         bad = set(cols) - allowed
         if bad:
-            raise ValueError(f"colonnes inconnues : {bad}")
+            raise ValueError(f"unknown columns: {bad}")
         sets = ", ".join(f"{k}=?" for k in cols)
         self._con.execute(
             f"UPDATE runs SET {sets} WHERE run_id=?",

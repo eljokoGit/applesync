@@ -1,25 +1,25 @@
 @echo off
 setlocal EnableExtensions
 rem ============================================================
-rem  Lanceur Windows optionnel : cree l'environnement Python au
-rem  premier lancement, puis demarre AppleSync.
+rem  Optional Windows launcher: creates the Python environment on
+rem  first run, then starts AppleSync.
 rem
-rem  Equivalent en ligne de commande :
+rem  Command-line equivalent:
 rem      python -m venv .venv
 rem      .venv\Scripts\python -m pip install .
 rem      .venv\Scripts\python -m applesync
 rem
-rem  Ce script ne telecharge rien d'autre que les dependances
-rem  Python declarees dans pyproject.toml.
+rem  This script downloads nothing beyond the Python dependencies
+rem  declared in pyproject.toml.
 rem ============================================================
 
 cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" (
-    echo Creation de l'environnement Python...
+    echo Creating the Python environment...
     python -m venv .venv || (
-        echo [ERREUR] Python 3.12+ est requis et doit etre dans le PATH.
-        echo          https://www.python.org/downloads/
+        echo [ERROR] Python 3.12+ is required and must be on the PATH.
+        echo         https://www.python.org/downloads/
         pause
         exit /b 1
     )
@@ -27,9 +27,9 @@ if not exist ".venv\Scripts\python.exe" (
 
 .venv\Scripts\python.exe -c "import applesync, PySide6, pymobiledevice3" >nul 2>&1
 if errorlevel 1 (
-    echo Installation des dependances ^(quelques minutes la premiere fois^)...
+    echo Installing dependencies ^(a few minutes on the first run^)...
     .venv\Scripts\python.exe -m pip install . || (
-        echo [ERREUR] Installation impossible. Verifiez la connexion reseau.
+        echo [ERROR] Installation failed. Check the network connection.
         pause
         exit /b 1
     )

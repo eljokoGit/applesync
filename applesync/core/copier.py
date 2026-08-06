@@ -1,17 +1,17 @@
-"""Moteur de copie : téléchargement vers .part, reprise exacte, SHA-256 au vol.
+"""Copy engine: download to .part, exact resume, SHA-256 on the fly.
 
-Garanties :
-- Un fichier n'apparaît sous son nom définitif QUE complet : écriture dans
-  `<cible>.part` + sidecar `.part.meta.json`, puis fsync, contrôle de taille,
-  et os.replace (atomique) vers le nom final. Jamais de partiel déguisé.
-- Reprise : au redémarrage, si le .part existe et que le sidecar correspond à
-  l'identité source actuelle (chemin, taille, mtime), on re-hache le partiel
-  local puis on continue la lecture à l'offset exact (seek côté appareil).
-  Si l'identité a changé : on repart de zéro pour ce fichier.
-- Le SHA-256 couvre TOUS les octets écrits (relecture du partiel comprise) :
-  le hachage final est celui du fichier complet, reprise ou pas.
-- Interruption utilisateur : arrêt à la frontière d'un bloc, .part conservé,
-  état repris tel quel à l'exécution suivante.
+Guarantees:
+- A file appears under its final name ONLY when complete: written to
+  `<target>.part` plus a `.part.meta.json` sidecar, then fsync, size check and
+  os.replace (atomic) to the final name. Never a partial file in disguise.
+- Resume: on restart, if the .part exists and the sidecar matches the current
+  source identity (path, size, mtime), the local partial file is re-hashed and
+  reading continues at the exact offset (seek on the device side). If the
+  identity changed, that file starts over.
+- The SHA-256 covers EVERY written byte (including the re-read partial): the
+  final hash is the hash of the complete file, resumed or not.
+- User interruption: stop at a block boundary, .part kept, state picked up
+  as-is on the next run.
 """
 
 from __future__ import annotations
@@ -27,15 +27,15 @@ from typing import Callable, Optional
 from applesync.core.journal import Journal
 from applesync.device.base import DeviceSession, RemoteFile
 
-CHUNK = 1024 * 1024  # 1 Mio
+CHUNK = 1024 * 1024  # 1 MiB
 
 
 class CopyError(Exception):
-    """Erreur de copie non liée à l'appareil (disque plein, cible occupée…)."""
+    """Copy error unrelated to the device (disk full, target taken…)."""
 
 
 class CopyCancelled(Exception):
-    """Interruption propre demandée par l'utilisateur."""
+    """Clean interruption requested by the user."""
 
 
 @dataclass
@@ -43,12 +43,12 @@ class CopyResult:
     remote: RemoteFile
     local_relpath: str
     sha256: str
-    bytes_copied_this_run: int   # octets réellement transférés cette fois
-    resumed_from: int            # 0 si copie neuve
+    bytes_copied_this_run: int   # bytes actually transferred this time
+    resumed_from: int            # 0 for a fresh copy
     duration_s: float
 
 
-ProgressCb = Callable[[int, int], None]   # (octets_faits_du_fichier, taille_totale)
+ProgressCb = Callable[[int, int], None]   # (bytes done for this file, total size)
 
 
 def _sidecar_path(part_path: Path) -> Path:
@@ -89,7 +89,7 @@ def copy_file(
     progress_cb: Optional[ProgressCb] = None,
     chunk_size: int = CHUNK,
 ) -> CopyResult:
-    """Copie `remote` vers `dest_root/local_relpath`. Voir garanties du module."""
+    """Copy `remote` to `dest_root/local_relpath`. See the module guarantees."""
     start = time.time()
     dest_root = Path(dest_root)
     target = dest_root / local_relpath
@@ -97,10 +97,10 @@ def copy_file(
     target.parent.mkdir(parents=True, exist_ok=True)
 
     if target.exists():
-        # Le planificateur ne doit jamais nous envoyer ici ; double sécurité.
-        raise CopyError(f"cible déjà occupée, copie refusée : {target}")
+        # The planner must never send us here; belt and braces.
+        raise CopyError(f"target already taken, copy refused: {target}")
 
-    # --- reprise éventuelle -------------------------------------------------
+    # --- possible resume ----------------------------------------------------
     resume_offset = 0
     hasher = hashlib.sha256()
     sidecar = _read_sidecar(part)
@@ -112,7 +112,7 @@ def copy_file(
         )
         part_size = part.stat().st_size
         if same_identity and 0 < part_size <= remote.size:
-            # Re-hachage du partiel : le SHA final couvrira tout le fichier.
+            # Re-hash the partial file: the final SHA covers the whole file.
             with open(part, "rb") as fh:
                 while True:
                     block = fh.read(CHUNK)
@@ -121,27 +121,28 @@ def copy_file(
                     hasher.update(block)
             resume_offset = part_size
             journal.event(
-                "reprise_fichier",
+                "file_resumed",
                 path=remote.path,
                 offset=resume_offset,
                 total=remote.size,
             )
         else:
             journal.event(
-                "partiel_invalide_reinitialise",
+                "stale_partial_discarded",
                 path=remote.path,
-                raison="identité source changée" if not same_identity else "taille incohérente",
+                reason="source identity changed" if not same_identity
+                       else "inconsistent size",
             )
             part.unlink()
             _sidecar_path(part).unlink(missing_ok=True)
     elif part.exists():
-        # .part orphelin sans sidecar : origine inconnue, on repart de zéro.
-        journal.event("partiel_sans_sidecar_reinitialise", path=remote.path)
+        # Orphan .part without a sidecar: unknown provenance, start over.
+        journal.event("partial_without_sidecar_discarded", path=remote.path)
         part.unlink()
 
     _write_sidecar(part, remote)
 
-    # --- transfert ------------------------------------------------------------
+    # --- transfer -----------------------------------------------------------
     copied_this_run = 0
     mode = "r+b" if resume_offset else "wb"
     with session.open_file(remote.path) as reader, open(part, mode) as out:
@@ -153,15 +154,15 @@ def copy_file(
             if cancel is not None and cancel():
                 out.flush()
                 os.fsync(out.fileno())
-                journal.event("copie_interrompue", path=remote.path, offset=pos)
+                journal.event("copy_interrupted", path=remote.path, offset=pos)
                 raise CopyCancelled(remote.path)
             want = min(chunk_size, remote.size - pos)
             data = reader.read(want)
             if not data:
-                # Fin de fichier avant la taille annoncée : jamais silencieux.
+                # End of stream before the announced size: never silent.
                 raise CopyError(
-                    f"{remote.path}: flux terminé à {pos} octets, "
-                    f"{remote.size} attendus"
+                    f"{remote.path}: stream ended at {pos} bytes, "
+                    f"{remote.size} expected"
                 )
             out.write(data)
             hasher.update(data)
@@ -172,25 +173,25 @@ def copy_file(
         out.flush()
         os.fsync(out.fileno())
 
-    # --- contrôles et bascule atomique ---------------------------------------
+    # --- checks and atomic swap ---------------------------------------------
     actual = part.stat().st_size
     if actual != remote.size:
         raise CopyError(
-            f"{remote.path}: taille écrite {actual} ≠ taille source {remote.size}"
+            f"{remote.path}: wrote {actual} bytes, source size is {remote.size}"
         )
     sha = hasher.hexdigest()
-    os.utime(part, (time.time(), remote.mtime))  # mtime local = mtime source
-    os.replace(part, target)                     # atomique sur même volume
+    os.utime(part, (time.time(), remote.mtime))  # local mtime = source mtime
+    os.replace(part, target)                     # atomic on the same volume
     _sidecar_path(part).unlink(missing_ok=True)
 
     journal.event(
-        "fichier_copie",
+        "file_copied",
         path=remote.path,
         local=str(local_relpath),
-        taille=remote.size,
+        size=remote.size,
         sha256=sha,
-        repris_a=resume_offset,
-        duree_s=round(time.time() - start, 3),
+        resumed_from=resume_offset,
+        duration_s=round(time.time() - start, 3),
     )
     return CopyResult(
         remote=remote,
