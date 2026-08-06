@@ -1,0 +1,3 @@
+# cmd.exe exige des fins de ligne CRLF pour parser correctement les .bat
+# (les labels/call :sub se désalignent en LF pur).
+*.bat text eol=crlf
