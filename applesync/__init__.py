@@ -6,5 +6,5 @@ A loud failure beats a doubtful success.
 
 # Single source of truth for the version: pyproject.toml reads it here
 # (dynamic version), and the release workflow checks it matches the git tag.
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 APP_NAME = "AppleSync"

@@ -5,6 +5,36 @@ This project follows [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-08-06
+
+Interface only. No change to the backup engine: the core, the device layer and
+the tests are untouched, and the 110 tests pass unchanged.
+
+### Added
+
+- `applesync/ui/theme.py`: design tokens and the application stylesheet. One
+  neutral family, one accent, three semantic states, a typographic scale, and
+  explicit hover / pressed / focus / disabled states. No widget carries inline
+  colours any more.
+- Errors now appear inline in a dismissable strip; the modal dialog is opt-in
+  and only carries the traceback.
+- An empty state that explains what the inventory does, replaced by a summary
+  of the last completed run once there is one.
+- Tooltips on the tool buttons.
+
+### Changed
+
+- The two steps of the main flow are the only accented buttons; the tools sit
+  behind a separator and the stop button is pushed to the right, instead of
+  seven identical buttons in a row.
+- Device state is a card with a status dot and a tinted background rather than
+  a coloured left border; the UDID is selectable and monospaced.
+- Counters, sizes, throughput, paths and fingerprints are monospaced, so
+  digits stop shifting during a transfer.
+- The plan panel scrolls internally, so a long conflict list no longer pushes
+  the report off the window.
+- The report renders with its own document stylesheet.
+
 ## [1.0.0] — 2026-08-06
 
 First public release.
@@ -40,5 +70,6 @@ First public release.
 - No write operation towards the device exists in the code: deleting or
   modifying data on the device is impossible by construction, not by policy.
 
-[Unreleased]: https://github.com/eljokoGit/applesync/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/eljokoGit/applesync/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/eljokoGit/applesync/releases/tag/v1.1.0
 [1.0.0]: https://github.com/eljokoGit/applesync/releases/tag/v1.0.0
