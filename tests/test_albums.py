@@ -240,9 +240,15 @@ def test_marqueur_perdu_mais_csv_a_nous_reconstruit(backend, dest, tmp_path):
     assert report.albums_count == len(data.albums)
 
 
-def test_fichier_verrouille_message_actionnable(backend, dest, tmp_path):
-    """Un fichier de _Albums ouvert ailleurs (Excel…) : message clair, et le
-    dossier reste reconnu comme nôtre pour le prochain essai."""
+def test_fichier_verrouille_message_actionnable(backend, dest, tmp_path, monkeypatch):
+    """Un fichier de _Albums ouvert ailleurs (tableur…) : message clair, et le
+    dossier reste reconnu comme nôtre pour le prochain essai.
+
+    Le verrou est simulé plutôt que réel : seul Windows interdit de supprimer
+    un fichier ouvert, et c'est la logique de récupération qu'on veut tester,
+    pas le système de fichiers."""
+    import applesync.core.albums as albums_mod
+
     _sync_mirror(backend, dest)
     db = tmp_path / "Photos.sqlite"
     con = _fixture_db(db)
@@ -252,14 +258,19 @@ def test_fichier_verrouille_message_actionnable(backend, dest, tmp_path):
 
     with Manifest(dest) as m:
         materialize_albums(data, m, dest)
-        verrou = open(dest / "_Albums" / "albums.csv", "r", encoding="utf-8-sig")
-        try:
-            with pytest.raises(AlbumsError) as exc:
-                materialize_albums(data, m, dest)
-        finally:
-            verrou.close()
+
+        def rmtree_bloque(*args, **kwargs):
+            raise OSError(13, "Le fichier est utilisé par un autre processus")
+
+        monkeypatch.setattr(albums_mod.shutil, "rmtree", rmtree_bloque)
+        with pytest.raises(AlbumsError) as exc:
+            materialize_albums(data, m, dest)
         assert "ouvert dans un autre programme" in str(exc.value)
-        # Et après fermeture du fichier : la régénération repasse
+        # Le marqueur a été reposé : le dossier reste reconnu comme nôtre
+        assert (dest / "_Albums" / ".applesync-genere").exists()
+
+        # Verrou levé : la régénération repasse
+        monkeypatch.undo()
         report = materialize_albums(data, m, dest)
     assert report.albums_count == len(data.albums)
 
