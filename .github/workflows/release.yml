@@ -84,6 +84,8 @@ jobs:
           python -m pip install .
           pyinstaller --noconfirm --clean --onefile --windowed `
             --name AppleSync `
+            --icon applesync/ui/assets/icon.ico `
+            --add-data "applesync/ui/assets/icon.png;applesync/ui/assets" `
             --collect-submodules pymobiledevice3 `
             --collect-data pymobiledevice3 `
             applesync/__main__.py

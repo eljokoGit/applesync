@@ -5,6 +5,16 @@ This project follows [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-08-07
+
+### Added
+
+- An application icon. `applesync/ui/assets/icon.png` is loaded at start-up
+  for the window and the taskbar, and `icon.ico` is compiled into
+  `AppleSync.exe`. The `.ico` carries a distinct rendering per size: below
+  32 px the mark is enlarged and the tile margin dropped, because at that
+  scale the breathing room costs more legibility than it buys.
+
 ## [1.2.0] — 2026-08-06
 
 Interface only, again: the core, the device layer and the tests are untouched
@@ -109,7 +119,8 @@ First public release.
 - No write operation towards the device exists in the code: deleting or
   modifying data on the device is impossible by construction, not by policy.
 
-[Unreleased]: https://github.com/eljokoGit/applesync/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/eljokoGit/applesync/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/eljokoGit/applesync/releases/tag/v1.2.1
 [1.2.0]: https://github.com/eljokoGit/applesync/releases/tag/v1.2.0
 [1.1.0]: https://github.com/eljokoGit/applesync/releases/tag/v1.1.0
 [1.0.0]: https://github.com/eljokoGit/applesync/releases/tag/v1.0.0
